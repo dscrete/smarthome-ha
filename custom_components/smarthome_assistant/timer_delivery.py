@@ -12,7 +12,7 @@ import json
 import logging
 from uuid import uuid4
 
-from .jobs import JobError, TIMER_GRACE, iso_utc, parse_utc
+from .jobs import JobError, NATIVE_PROTOCOL, TIMER_GRACE, iso_utc, parse_utc
 from .const import validate_timer_outputs
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,6 +77,7 @@ class TimerDelivery:
                 raise JobError("invalid_output", "The satellite has no unique registered native MAC identity")
             jobs = await self.manager.async_list(kinds=["timer"], statuses=["pending", "due", "sounding"])
             jobs = [job for job in jobs if job.get("delivery", {}).get("owner") == "ha"
+                    and job["delivery"].get("protocol") != NATIVE_PROTOCOL
                     and job["delivery"].get("output") == output]
             if expected_mac and any(job["delivery"].get("mac_address") != expected_mac for job in jobs):
                 raise JobError("invalid_output", "An accepted timer belongs to a different output identity")
@@ -95,6 +96,7 @@ class TimerDelivery:
             # edits and terminal state are not projected from an old snapshot.
             all_jobs = await self.manager.async_list(kinds=["timer"], statuses=["pending", "due", "sounding"])
             jobs = [job for job in all_jobs if job.get("delivery", {}).get("owner") == "ha"
+                    and job["delivery"].get("protocol") != NATIVE_PROTOCOL
                     and job["delivery"].get("output") == output]
             projected = []
             for job in jobs:
@@ -141,14 +143,15 @@ class TimerDelivery:
                 if isinstance(result, Exception):
                     _LOGGER.debug("Native timer reconciliation unavailable for %s: %s", key, result)
             jobs = await self.manager.async_list(kinds=["timer"], statuses=["pending", "due", "sounding"])
-            outstanding = any(job.get("delivery", {}).get("owner") == "ha" for job in jobs) or any(self._acks.values())
+            outstanding = any(job.get("delivery", {}).get("owner") == "ha"
+                              and job["delivery"].get("protocol") != NATIVE_PROTOCOL for job in jobs) or any(self._acks.values())
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=2 if outstanding else 30)
             except TimeoutError:
                 pass
 
 
-def configure_delivery(hass, manager, bindings):
+def configure_exchange_delivery(hass, manager, bindings):
     """Wire public HA services, registries and TTS helpers into the worker."""
     bindings = validate_timer_outputs(bindings)
     if bindings == {}:
@@ -204,6 +207,47 @@ def configure_delivery(hass, manager, bindings):
         return async_process_play_media_url(hass, media.url)
 
     delivery = TimerDelivery(manager, bindings, exchange=exchange, identity=identity, audio=audio, target_mac=target_mac)
+    manager.timer_output = delivery.available
+    manager.on_change = delivery.wake
+    return delivery
+
+
+class CombinedTimerDelivery:
+    """Keep each accepted timer on its persisted output protocol."""
+
+    def __init__(self, exchange, standard):
+        self.exchange, self.standard = exchange, standard
+        self.bindings = exchange.bindings
+
+    async def available(self, source):
+        if any(self.exchange.identity(key, None, source) for key in self.bindings):
+            return await self.exchange.available(source)
+        output = await self.standard.available(source)
+        if output["output"] in self.bindings:
+            # An explicitly configured exchange never silently changes backend.
+            raise JobError("unavailable", "The configured enhanced timer output is unavailable")
+        return output
+
+    def wake(self):
+        self.exchange.wake()
+        self.standard.wake()
+
+    def start(self):
+        self.exchange.start()
+        self.standard.start()
+
+    async def stop(self):
+        await asyncio.gather(self.exchange.stop(), self.standard.stop())
+
+
+def configure_delivery(hass, manager, bindings):
+    """Use standard registered outputs; explicit mappings retain enhanced delivery."""
+    from .ha_native_timer_output import HAStandardTimerOutput
+    from .standard_timer_delivery import StandardTimerDelivery
+
+    exchange = configure_exchange_delivery(hass, manager, bindings)
+    standard = StandardTimerDelivery(manager, HAStandardTimerOutput(hass))
+    delivery = CombinedTimerDelivery(exchange, standard)
     manager.timer_output = delivery.available
     manager.on_change = delivery.wake
     return delivery

@@ -20,20 +20,23 @@ The integration does not install a model or change other pipelines.
    conversation entity and your existing STT/TTS. **Disable “Prefer handling
    commands locally”**. Otherwise native HA intents, including timers, can bypass
    Core's backend, validation and confirmation.
-5. Assign only the intended test satellite to that pipeline. For the EchoMuse
-   fork, choose its **Home Assistant voice backend** when using this pipeline.
+5. Assign only the intended test satellite to that pipeline. In EchoMuse,
+   choose its **Home Assistant voice backend** when using this pipeline.
    Physical EchoMuse playback remains unverified until an isolated hardware test.
-6. For timers, open the integration's Configure options and enter its native
-   timer-output mapping, following [installation and migration](https://github.com/dscrete/smarthome-ha).
+6. Standard timer-capable ESPHome Assist satellites need no output mapping.
+   For optional enhanced EchoMuse recovery, enter its exchange mapping in
+   Configure, following [installation and migration](https://github.com/dscrete/smarthome-ha).
    No separate jobs folder or YAML block is needed. The Gateway-binding field
    remains for compatibility; new timers do not use it.
 
 The `smarthome_jobs` backend is included in this integration for timers and
 schedules. Its API and `.storage/smarthome_jobs.storage` remain compatible. Existing Scheduler
-Component jobs are not migrated or deleted. New timers use HA-owned native EchoMuse
+Component jobs are not migrated or deleted. New timers use HA-owned native ESPHome
 delivery, and remain independent of Core/Gateway after acceptance. Existing timers
-retain their legacy owner until finished or cancelled. The tested fork controller
-and output mapping are required; unsupported outputs fail before persistence.
+retain their legacy owner until finished or cancelled. Compatible upstream
+EchoMuse controllers work with standard delivery; the fork and explicit mapping
+are needed only for enhanced acknowledgement/recovery. Unsupported outputs fail
+before persistence. See [standard delivery limits](https://github.com/dscrete/smarthome-ha#standard-timer-recovery-limits).
 
 ## Current merge scope
 
@@ -41,18 +44,19 @@ The target is exposed-device control and state queries, named timer lifecycle,
 low-risk one-shot schedules with edit/cancel, current/forecast weather and advice,
 typed HA scripts with confirmation, clarification and bounded conversation across
 wakes. The software baseline passes both repetitions of the eight recorded
-conversations: 52/52 turns on 20b low. See the
-[final verification record](https://github.com/dscrete/SmartHome/blob/codex/ha-centric-discovery/docs/modules/assistant-core/verification.md#final-conversation-gate-and-review-readiness-2026-10-20)
-for tested behavior and limits. This does not establish reliability for every
+conversations: 52/52 turns on 20b low. This earlier language result does not
+establish reliability for every
 phrasing or physical satellite playback. Missing dependencies or unsupported
 outputs report unavailability before creating a job.
 
-**#66 remains in draft for review with its EchoMuse companion dependency.**
-The [HA-owned delivery software checks](https://github.com/dscrete/SmartHome/blob/codex/ha-centric-discovery/docs/modules/assistant-core/verification.md#ha-owned-echomuse-delivery-2026-10-21)
-prove expiry and local dismissal with Core and SmartHome Gateway stopped, including
-HA/controller restart, offline dismissal, room isolation and the original cutoff.
-See the [delivery contract](https://github.com/dscrete/SmartHome/blob/codex/ha-centric-discovery/docs/scheduling.md#recommended-delivery-contract)
-for the timing and recovery rules. Physical playback remains explicitly unverified.
+**The development PR remains in draft.** The portable software checks prove
+expiry, repeated synthetic tone and button dismissal with Core/Gateway stopped,
+including HA restart, pre-handoff reconnect and the connected five-minute cutoff.
+Standard ESPHome output cannot acknowledge local dismissal or guarantee recovery
+of an interrupted handoff. Stock EchoMuse wake dismissal also affects all ringing
+Dots on the controller. The optional fork exchange supplies stronger guarantees;
+review [the delivery limits](https://github.com/dscrete/smarthome-ha#standard-timer-recovery-limits)
+before choosing. Physical playback remains explicitly unverified.
 
 New schedules and rescheduling reject actions classified sensitive by Core's
 existing safety policy, even after confirmation. Existing jobs remain inspectable

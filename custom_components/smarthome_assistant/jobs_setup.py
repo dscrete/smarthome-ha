@@ -26,6 +26,7 @@ async def async_setup_jobs(hass):
             "unknown": "A scheduled action may have run, but its result is unknown. It will not be repeated.",
             "failed": "A scheduled action failed.",
             "undelivered": "A timer expired without being delivered to its satellite.",
+            "native_unknown": "A timer alert may have reached its satellite, but delivery or dismissal could not be confirmed. It will not be replayed.",
         }
         name = f"Timer {job['name']} expired without delivery." if reason == "undelivered" and job.get("name") else labels[reason]
         persistent_notification.async_create(

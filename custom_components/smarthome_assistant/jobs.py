@@ -18,7 +18,8 @@ from typing import Any, Callable
 
 DOMAIN = "smarthome_jobs"
 EVENT_JOB_DUE = "smarthome_jobs_due"
-STORE_VERSION = 2
+STORE_VERSION = 3
+NATIVE_PROTOCOL = "assist_native"
 # The HA Store envelope remains compatible; the versioned job document migrates
 # below. No existing job changes delivery owner during an upgrade.
 STORAGE_VERSION = 1
@@ -121,7 +122,7 @@ class JobsManager:
     async def async_load(self) -> None:
         data = await self.store.async_load()
         if data:
-            if data.get("version") not in {1, STORE_VERSION}:
+            if data.get("version") not in {1, 2, STORE_VERSION}:
                 raise RuntimeError(f"Unsupported {DOMAIN} storage version")
             self.jobs, self.requests = data.get("jobs", {}), data.get("requests", {})
             self.authority_id = data.get("authority_id") or self.authority_id
@@ -237,6 +238,15 @@ class JobsManager:
         changed, due_events, notices = False, [], []
         for job in self.jobs.values():
             due, status = parse_utc(job["due_at"]), job["status"]
+            if (job.get("delivery", {}).get("protocol") == NATIVE_PROTOCOL
+                    and status == "due" and job["delivery"].get("finish_attempted_at")):
+                # Standard satellites cannot durably acknowledge dismissal.
+                # A reserved finish may have reached the output: never replay it.
+                job.update(status="unknown", outcome="native_delivery_unknown", notice_spoken=False,
+                           revision=job["revision"] + 1)
+                changed = True
+                notices.append((job, "native_unknown"))
+                continue
             if job["kind"] == "scheduled_action":
                 if status == "claimed":
                     job.update(status="unknown", outcome="unknown", notice_spoken=False, revision=job["revision"] + 1)
@@ -283,6 +293,8 @@ class JobsManager:
                     return replay["job"]
             output = await self.timer_output(raw.get("source_satellite"))
             delivery = {"owner": "ha", "output": output["output"], "token": str(uuid.uuid4()), "receipts": {}}
+            if output.get("delivery_protocol") == NATIVE_PROTOCOL:
+                delivery.update(protocol=NATIVE_PROTOCOL, device_id=output["device_id"])
             if output.get("mac_address"):
                 delivery.update(mac_address=output["mac_address"].replace(":", "").replace("-", "").lower(),
                                 controller_device_id=output.get("controller_device_id"))
@@ -407,6 +419,50 @@ class JobsManager:
             if (delivery.get("owner") == "ha" and output in old.bindings
                     and old.bindings[output] != bindings.get(output)):
                 raise ValueError("Finish or cancel active timers before changing their output binding")
+
+    async def async_native_begin(self, job_id: str, expected_revision: int) -> dict | None:
+        """Save a one-shot native finish reservation before any output work."""
+        async with self._lock:
+            job = self._job(job_id)
+            if (job["revision"] != expected_revision or job["status"] != "due"
+                    or job.get("delivery", {}).get("protocol") != NATIVE_PROTOCOL
+                    or job["delivery"].get("finish_attempted_at")
+                    or not parse_utc(job["due_at"]) <= self.now() <= parse_utc(job["due_at"]) + TIMER_GRACE):
+                return None
+            job["delivery"]["finish_attempted_at"] = iso_utc(self.now())
+            job["revision"] += 1
+            await self._save()
+            return copy.deepcopy(job)
+
+    async def async_native_finish(self, job_id: str, expected_revision: int, send, *, name_status: str) -> bool:
+        """Send once under the state guard; transport submission is not playback."""
+        async with self._lock:
+            job = self._job(job_id)
+            if (job["revision"] != expected_revision or job["status"] != "due"
+                    or job.get("delivery", {}).get("protocol") != NATIVE_PROTOCOL
+                    or not job["delivery"].get("finish_attempted_at")
+                    or self.now() > parse_utc(job["due_at"]) + TIMER_GRACE):
+                return False
+            try:
+                # The HA timer handler only queues a standard protocol message;
+                # it must be synchronous, with no network await under this lock.
+                if self.now() < parse_utc(job["due_at"]):
+                    raise JobError("not_due", "HA's clock moved before the reserved timer due time")
+                send(copy.deepcopy(job))
+            except Exception:
+                job.update(status="unknown", outcome="native_delivery_unknown", notice_spoken=False)
+                reason = "native_unknown"
+            else:
+                job.update(status="completed", outcome="handed_off")
+                job["delivery"]["transport_sent_at"] = iso_utc(self.now())
+                reason = None
+            job["delivery"]["name_status"] = name_status
+            job["revision"] += 1
+            await self._save()
+            self._cancel_schedule(job_id)
+            if reason:
+                self.notify(job, reason)
+            return reason is None
 
     async def async_claim(self, request_id: str, job_id: str, expected_revision: int) -> dict[str, Any]:
         async with self._lock:
@@ -537,6 +593,7 @@ class JobsManager:
                     raise JobError("not_found", "receipt job does not exist")
                 delivery = job.get("delivery", {})
                 if (job["kind"] != "timer" or delivery.get("owner") != "ha"
+                        or delivery.get("protocol") == NATIVE_PROTOCOL
                         or delivery.get("output") != output or delivery.get("token") != token):
                     raise JobError("invalid_output", "receipt does not belong to this output/presentation")
                 saved = delivery.setdefault("receipts", {})
@@ -639,7 +696,11 @@ class JobsManager:
             if not job or job["kind"] != "timer" or job["status"] not in {"due", "sounding"}: return
             if self.now().astimezone(timezone.utc) <= parse_utc(job["due_at"]) + TIMER_GRACE:
                 self._schedule_job(job); return
-            if job.get("delivered_at"):
+            if job.get("delivery", {}).get("protocol") == NATIVE_PROTOCOL and job["delivery"].get("finish_attempted_at"):
+                job.update(status="unknown", outcome="native_delivery_unknown", notice_spoken=False,
+                           revision=job["revision"] + 1)
+                await self._save(); self.notify(job, "native_unknown")
+            elif job.get("delivered_at"):
                 job.update(status="expired", outcome="auto_stopped", revision=job["revision"] + 1)
                 await self._save()
             else:
