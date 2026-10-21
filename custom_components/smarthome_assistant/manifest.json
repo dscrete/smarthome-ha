@@ -1,0 +1,21 @@
+{
+  "domain": "smarthome_assistant",
+  "name": "SmartHome Assistant",
+  "codeowners": [
+    "@dscrete"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "conversation"
+  ],
+  "after_dependencies": [
+    "assist_pipeline",
+    "esphome",
+    "media_source",
+    "tts"
+  ],
+  "documentation": "https://github.com/dscrete/smarthome-ha",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/dscrete/smarthome-ha/issues",
+  "version": "1.2.0"
+}

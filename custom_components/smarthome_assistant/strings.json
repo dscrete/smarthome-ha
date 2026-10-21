@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to SmartHome Core",
+        "description": "Enter the Core URL and bearer token. Core must expose protocol version 1. Timer outputs map an assist satellite to its ESPHome timer exchange action; Home Assistant calls that output's action to deliver timer announcements. Example: {\"assist_satellite.kitchen\": \"esphome.kitchen_smarthome_timer_exchange_v1\"}.",
+        "data": {
+          "core_url": "Core URL",
+          "token": "Bearer token",
+          "bindings": "Satellite or device to gateway satellite ID bindings",
+          "timer_outputs": "Assist satellite to ESPHome timer output mapping"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure SmartHome Core",
+        "description": "Timer outputs map an assist satellite to its ESPHome timer exchange action; Home Assistant calls that output's action to deliver timer announcements. Example: {\"assist_satellite.kitchen\": \"esphome.kitchen_smarthome_timer_exchange_v1\"}.",
+        "data": {
+          "core_url": "Core URL",
+          "token": "Bearer token",
+          "bindings": "Satellite or device to gateway satellite ID bindings",
+          "timer_outputs": "Assist satellite to ESPHome timer output mapping"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Core rejected the bearer token.",
+      "cannot_connect": "Could not connect to Core. Check its URL and availability.",
+      "unsupported_protocol": "Core does not support protocol version 1.",
+      "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their bindings."
+    },
+    "abort": {
+      "reconfigure_successful": "Core connection updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Satellite output bindings and timer outputs",
+        "description": "Bindings route announcements through gateway satellites. Timer outputs map each assist satellite to an ESPHome timer exchange action; Home Assistant calls that output's action to deliver timer announcements. Example: {\"assist_satellite.kitchen\": \"esphome.kitchen_smarthome_timer_exchange_v1\"}.",
+        "data": {
+          "bindings": "Gateway satellite bindings",
+          "timer_outputs": "Timer output mapping"
+        }
+      }
+    },
+    "error": {
+      "invalid_bindings": "Each binding must map a non-empty source ID to a non-empty gateway satellite ID.",
+      "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their bindings."
+    }
+  }
+}
