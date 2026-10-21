@@ -6,7 +6,7 @@ PLATFORMS = ("conversation",)
 
 CONF_CORE_URL = "core_url"
 CONF_TOKEN = "token"
-CONF_BINDINGS = "bindings"
+CONF_PROFILE_ID = "profile_id"
 CONF_TIMER_OUTPUTS = "timer_outputs"
 
 _TIMER_EXCHANGE_SUFFIX = "_smarthome_timer_exchange_v1"

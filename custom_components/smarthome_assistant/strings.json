@@ -3,22 +3,34 @@
     "step": {
       "user": {
         "title": "Connect to SmartHome Core",
-        "description": "Enter the Core connection. Standard timer-capable ESPHome satellites use their existing HA connection automatically. Optional enhanced mappings require the compatible EchoMuse exchange action and provide stronger recovery.",
+        "description": "Enter the Core connection and any enhanced timer output mappings. SmartHome Core handles conversation and execution; Home Assistant owns voice activation and speech output.",
         "data": {
           "core_url": "Core URL",
           "token": "Bearer token",
-          "bindings": "Satellite or device to gateway satellite ID bindings",
           "timer_outputs": "Enhanced timer output mapping (optional)"
+        }
+      },
+      "persona": {
+        "title": "Choose a persona",
+        "description": "Select the persona this SmartHome Assistant agent will use. Home Assistant continues to own wake word and speech output.",
+        "data": {
+          "profile_id": "Persona"
         }
       },
       "reconfigure": {
         "title": "Reconfigure SmartHome Core",
-        "description": "Enter the Core connection. Standard timer-capable ESPHome satellites use their existing HA connection automatically. Optional enhanced mappings require the compatible EchoMuse exchange action and provide stronger recovery.",
+        "description": "Update the Core connection and enhanced timer output mappings.",
         "data": {
           "core_url": "Core URL",
           "token": "Bearer token",
-          "bindings": "Satellite or device to gateway satellite ID bindings",
           "timer_outputs": "Enhanced timer output mapping (optional)"
+        }
+      },
+      "reconfigure_persona": {
+        "title": "Choose a persona",
+        "description": "Select the persona this SmartHome Assistant agent will use. Home Assistant continues to own wake word and speech output.",
+        "data": {
+          "profile_id": "Persona"
         }
       }
     },
@@ -26,7 +38,8 @@
       "invalid_auth": "Core rejected the bearer token.",
       "cannot_connect": "Could not connect to Core. Check its URL and availability.",
       "unsupported_protocol": "Core does not support protocol version 1.",
-      "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their bindings."
+      "invalid_persona": "Choose a persona offered by Core or keep the saved persona.",
+      "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their timer output mapping."
     },
     "abort": {
       "reconfigure_successful": "Core connection updated."
@@ -35,17 +48,17 @@
   "options": {
     "step": {
       "init": {
-        "title": "Satellite output bindings and timer outputs",
-        "description": "Standard native timers need no mapping. Enhanced mappings select compatible acknowledged EchoMuse exchange actions. Gateway bindings are separate legacy output settings.",
+        "title": "Persona and timer outputs",
+        "description": "Home Assistant owns wake word and speech output. Enhanced timer mappings select compatible acknowledged EchoMuse exchange actions.",
         "data": {
-          "bindings": "Gateway satellite bindings",
+          "profile_id": "Persona",
           "timer_outputs": "Enhanced timer output mapping (optional)"
         }
       }
     },
     "error": {
-      "invalid_bindings": "Each binding must map a non-empty source ID to a non-empty gateway satellite ID.",
-      "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their bindings."
+      "invalid_persona": "Choose a persona offered by Core or keep the saved persona.",
+      "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their timer output mapping."
     }
   }
 }

@@ -12,10 +12,12 @@ The integration does not install a model or change other pipelines.
    still copy this one folder into `config/custom_components/smarthome_assistant`.
 2. In SmartHome Settings → Home Assistant, set **HA conversation agent
    credential** (`CORE_HA_AGENT_TOKEN`) to a dedicated random secret and restart
-   Core. This is separate from the Gateway alert secret. Empty disables the route.
+   Core. Empty disables the HA-agent routes.
 3. In HA → Settings → Devices & services → Add integration, select **SmartHome
    Assistant**. Enter Core's reachable HTTP(S) URL and that credential. Use HTTPS
    outside a trusted local network. Never put credentials in the URL.
+   On the next page choose a **Persona**, or keep Core's default. This is a
+   wording style only; configure wake word and TTS voice in HA/the satellite.
 4. Create a separate HA voice assistant/pipeline selecting the SmartHome
    conversation entity and your existing STT/TTS. **Disable “Prefer handling
    commands locally”**. Otherwise native HA intents, including timers, can bypass
@@ -26,14 +28,15 @@ The integration does not install a model or change other pipelines.
 6. Standard timer-capable ESPHome Assist satellites need no output mapping.
    For optional enhanced EchoMuse recovery, enter its exchange mapping in
    Configure, following [installation and migration](https://github.com/dscrete/smarthome-ha).
-   No separate jobs folder or YAML block is needed. The Gateway-binding field
-   remains for compatibility; new timers do not use it.
+   No separate jobs folder or YAML block is needed. The old Gateway-binding field
+   is removed; saved legacy values are ignored.
 
 The `smarthome_jobs` backend is included in this integration for timers and
 schedules. Its API and `.storage/smarthome_jobs.storage` remain compatible. Existing Scheduler
 Component jobs are not migrated or deleted. New timers use HA-owned native ESPHome
 delivery, and remain independent of Core/Gateway after acceptance. Existing timers
-retain their legacy owner until finished or cancelled. Compatible upstream
+retain their stored owner. Finish/cancel active Gateway-owned timers on the old
+version before upgrading Core; the HA-only runtime refuses them. Compatible upstream
 EchoMuse controllers work with standard delivery; the fork and explicit mapping
 are needed only for enhanced acknowledgement/recovery. Unsupported outputs fail
 before persistence. See [standard delivery limits](https://github.com/dscrete/smarthome-ha#standard-timer-recovery-limits).
@@ -117,6 +120,13 @@ execution already happened; check the actual device/job before repeating it.
 Missing dependencies produce explicit unavailable/unknown feedback. Native tools
 currently require the configured Groq primary; this route does not use the configured
 fallback. GPT-OSS 20b remains the default.
+
+The retired `/satellites/ws` Core audio endpoint and standalone Gateway/client are
+removed. Core requires no speech services; HA handles voice. The optional
+`profile_id` on authenticated text turns comes from agent configuration, never
+detected wake metadata. An unknown explicit persona fails before any model call
+or action. Omitted IDs use Core's configured fallback. Automatic per-wake persona
+switching is deferred. Previously protected request IDs keep their replay window.
 
 Unloading stops the agent; HA may retain an unavailable restored entity until it
 is loaded again. Unloading or removal does not cancel HA-owned jobs or delete

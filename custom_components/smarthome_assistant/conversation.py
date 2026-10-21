@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 
 from .api import CoreAuthError, CoreClient, CoreError, CoreTimeoutError
-from .const import CONF_BINDINGS, DOMAIN
+from .const import CONF_PROFILE_ID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ class SmartHomeConversationEntity(conversation.ConversationEntity):
             "conversation_id": conversation_id,
             "text": user_input.text,
             "language": user_input.language,
+            **self._configured_persona(),
             **source,
         }
         try:
@@ -87,7 +88,7 @@ class SmartHomeConversationEntity(conversation.ConversationEntity):
         )
 
     def _trusted_source(self, user_input: conversation.ConversationInput) -> dict:
-        """Resolve source and output routing only from ConversationInput + HA registries."""
+        """Resolve source metadata only from ConversationInput + HA registries."""
         device_id = user_input.device_id
         device_reg = device_registry.async_get(self.hass)
         entity_reg = entity_registry.async_get(self.hass)
@@ -95,14 +96,6 @@ class SmartHomeConversationEntity(conversation.ConversationEntity):
 
         device = device_reg.async_get(device_id) if isinstance(device_id, str) else None
         registered_device_id = device.id if device else None
-        associated = (
-            entity_registry.async_entries_for_device(entity_reg, registered_device_id)
-            if registered_device_id else []
-        )
-        satellite_entities = {
-            item.entity_id for item in associated
-            if item.domain == "assist_satellite"
-        }
         input_satellite = user_input.satellite_id
         satellite_entry = None
         if isinstance(input_satellite, str):
@@ -114,15 +107,11 @@ class SmartHomeConversationEntity(conversation.ConversationEntity):
                     input_satellite = None
                     satellite_entry = None
                 else:
-                    satellite_entities.add(satellite_entry.entity_id)
                     if registered_device_id is None and satellite_entry.device_id:
                         satellite_device = device_reg.async_get(satellite_entry.device_id)
                         if satellite_device:
                             device = satellite_device
                             registered_device_id = satellite_device.id
-                            associated = entity_registry.async_entries_for_device(
-                                entity_reg, registered_device_id,
-                            )
             else:
                 input_satellite = None
 
@@ -138,19 +127,6 @@ class SmartHomeConversationEntity(conversation.ConversationEntity):
             area_id = device.area_id
         area = area_reg.async_get_area(area_id) if area_id else None
 
-        bindings = self.entry.options.get(
-            CONF_BINDINGS, self.entry.data.get(CONF_BINDINGS, {}),
-        )
-        output_binding = None
-        if isinstance(bindings, dict):
-            for key in ([input_satellite] if input_satellite else []) + sorted(satellite_entities) + (
-                [registered_device_id] if registered_device_id else []
-            ):
-                value = bindings.get(key)
-                if isinstance(value, str) and value.strip():
-                    output_binding = value.strip()
-                    break
-
         result = {}
         if registered_device_id:
             result["device_id"] = registered_device_id
@@ -159,6 +135,12 @@ class SmartHomeConversationEntity(conversation.ConversationEntity):
         if area:
             result["area_id"] = area.id
             result["area_name"] = area.name
-        if output_binding:
-            result["output_binding"] = output_binding
         return result
+
+    def _configured_persona(self) -> dict[str, str]:
+        profile_id = self.entry.options.get(
+            CONF_PROFILE_ID, self.entry.data.get(CONF_PROFILE_ID),
+        )
+        if isinstance(profile_id, str) and profile_id.strip():
+            return {CONF_PROFILE_ID: profile_id.strip()}
+        return {}

@@ -24,6 +24,8 @@ jobs in HA's separate persistent storage.
 
 1. Run SmartHome Core and configure its dedicated HA-agent bearer credential.
    Enter Core's reachable URL and that credential in this integration.
+   Then choose its **Persona**, or keep Core's configured default. This changes
+   conversational wording; HA continues to own wake words and TTS voices.
 2. Create a dedicated HA voice pipeline selecting **SmartHome Assistant** and
    your STT/TTS. Disable **Prefer handling commands locally** so native intents
    cannot bypass Core's backend and validation. Assign the intended satellite.
@@ -41,8 +43,8 @@ jobs in HA's separate persistent storage.
    }
    ```
 
-   Enhanced delivery requires the compatible fork controller. The separate gateway
-   bindings are for legacy Gateway features and can stay empty for this HA route.
+   Enhanced delivery requires the compatible fork controller. The old Gateway
+   binding field is retired; any saved legacy values are ignored.
 5. Configure a TTS voice in HA's preferred Assist pipeline for timer names.
    Missing or disconnected outputs reject a new timer before persistence.
 
@@ -61,7 +63,8 @@ bearer credential. Keep credentials out of repository files and URLs.
   [EchoMuse change](https://github.com/DylanSchwikkard/EchoMuse/pull/16).
   An ordinary upstream controller does not supply that optional exchange.
 - Accepted new timers need HA and that controller, with no Core/Gateway dependency
-  for expiry or local dismissal. Legacy timers retain their original owner.
+  for expiry or local dismissal. Finish or cancel active legacy Gateway timers
+  with the previous Core version before upgrading; the HA-only Core refuses them.
 - Scheduled device actions still require Core at dispatch. Missed actions are
   skipped; uncertain actions are never automatically replayed.
 - Timer delivery is software-tested with synthetic Dots. Physical audio, acoustic
@@ -101,6 +104,13 @@ references. Transfer any old `smarthome_jobs.timer_outputs` YAML mapping into th
 integration's timer options. Remove the `smarthome_jobs:` YAML block and retire
 `custom_components/smarthome_jobs` before restarting into the combined version.
 Only `custom_components/smarthome_assistant` is installed going forward.
+
+For the HA-only Core update, first finish/cancel active Gateway timers using the
+previous version. Their IDs are listed in HA's migration notification. Stored
+owners are preserved; no timer is silently moved to another delivery path. Stop
+the old SmartHome Compose project before updating so an orphan Gateway container
+does not remain active. Preserve bind-mounted data and volumes. Persona changes
+apply through **Configure**; omitted selections retain Core's default.
 
 Do **not** remove `.storage/smarthome_jobs.storage`: its key, job IDs, HA authority,
 delivery tokens and API are preserved. Finish or cancel active timers before

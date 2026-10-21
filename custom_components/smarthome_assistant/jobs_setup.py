@@ -53,6 +53,16 @@ async def async_setup_jobs(hass):
     delivery = configure_delivery(hass, manager, {})
     manager.delivery_worker = delivery
     async_register_websocket_commands(hass)
+    legacy_timers = [job["id"] for job in manager.jobs.values()
+        if job["kind"] == "timer" and job["status"] in {"pending", "due", "sounding"}
+        and job.get("delivery", {}).get("owner") != "ha"]
+    if legacy_timers:
+        persistent_notification.async_create(hass,
+            "Finish or cancel these Gateway-owned timers before upgrading to the HA-only "
+            "SmartHome Core. Their delivery ownership was not changed: " + ", ".join(legacy_timers),
+            title="Review legacy SmartHome timers", notification_id=f"{DOMAIN}_gateway_retirement")
+    else:
+        persistent_notification.async_dismiss(hass, f"{DOMAIN}_gateway_retirement")
 
     @callback
     def warn_legacy_jobs(_event):
