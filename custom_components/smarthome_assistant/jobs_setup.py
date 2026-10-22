@@ -65,21 +65,10 @@ async def async_setup_jobs(hass):
         persistent_notification.async_dismiss(hass, f"{DOMAIN}_gateway_retirement")
 
     @callback
-    def warn_legacy_jobs(_event):
+    def start_delivery(_event):
         manager.delivery_worker.start()
-        legacy = sorted(state.entity_id for state in hass.states.async_all()
-                        if state.entity_id.startswith("switch.schedule_assistant_job_"))
-        if legacy:
-            persistent_notification.async_create(
-                hass,
-                "Existing Scheduler Component assistant jobs need review before "
-                "removing that HACS integration. They were not migrated: "
-                + ", ".join(legacy),
-                title="Review legacy SmartHome schedules",
-                notification_id=f"{DOMAIN}_legacy_schedules",
-            )
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, warn_legacy_jobs)
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, start_delivery)
     if getattr(hass, "is_running", False):
         manager.delivery_worker.start()
 

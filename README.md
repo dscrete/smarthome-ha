@@ -6,7 +6,7 @@ requests and validates home actions. Core is installed separately.
 
 ## Install and update
 
-The current stable release is **1.3.0**, with the same runtime as 1.3.0 beta 4.
+The current stable release is **1.3.1**, using the included HA-owned job backend.
 No beta selection is required in HACS. The software verification does not establish
 physical satellite performance; the delivery limits below still apply.
 
