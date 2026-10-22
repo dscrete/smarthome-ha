@@ -10,13 +10,14 @@ The integration does not install a model or change other pipelines.
 1. Install [SmartHome Assistant through HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=dscrete&repository=smarthome-ha&category=integration) and restart HA.
    Released updates use HACS-provided HA update entities. Developer installs can
    still copy this one folder into `config/custom_components/smarthome_assistant`.
-2. In SmartHome Settings → Home Assistant, set **HA conversation agent
-   credential** (`CORE_HA_AGENT_TOKEN`) to a dedicated random secret and restart
-   Core. Empty disables the HA-agent routes.
+2. Configure Core's administrator HA connection. Leave **Manual HA agent
+   credential** (`CORE_HA_AGENT_TOKEN`) empty for automatic pairing. Existing
+   nonempty manual credentials continue to work and disable automatic pairing.
 3. In HA → Settings → Devices & services → Add integration, select **SmartHome
-   Assistant**. Enter Core's reachable HTTP(S) URL and that credential. Use HTTPS
-   outside a trusted local network. Never put credentials in the URL.
-   On the next page choose a **Persona**, or keep Core's default. This is a
+   Assistant**. Enter Core's reachable HTTP(S) URL, leave the optional manual
+   credential empty, then approve pairing. HTTP is allowed on a trusted home
+   network but does not encrypt credentials; use HTTPS outside it. Never put
+   credentials in the URL. Choose a **Persona**, or keep Core's default. This is a
    wording style only; configure wake word and TTS voice in HA/the satellite.
 4. Create a separate HA voice assistant/pipeline selecting the SmartHome
    conversation entity and your existing STT/TTS. **Disable “Prefer handling
@@ -52,7 +53,7 @@ establish reliability for every
 phrasing or physical satellite playback. Missing dependencies or unsupported
 outputs report unavailability before creating a job.
 
-**The development PR remains in draft.** The portable software checks prove
+**The development PR is ready for review, not merged.** The portable software checks prove
 expiry, repeated synthetic tone and button dismissal with Core/Gateway stopped,
 including HA restart, pre-handoff reconnect and the connected five-minute cutoff.
 Standard ESPHome output cannot acknowledge local dismissal or guarantee recovery
@@ -94,6 +95,14 @@ proposal, replacement request or stale target/revision cannot approve it. Refusa
 discards the proposal. Conversation history never grants authority.
 
 ## Operation and failures
+
+Pairing uses one explicit approval in HA and Core's existing authenticated HA
+connection. Unapproved offers cannot authorize turns. Reconfiguration can rotate
+the automatic credential; removal revokes it when Core is reachable. For setup,
+offline recovery and manual compatibility, see
+[pairing and connection security](https://github.com/dscrete/smarthome-ha#pairing-and-connection-security).
+Core persists only its hash in `data/ha-agent/pairing.json`; HA holds the raw
+credential privately. Keep that state separate from the request journal below.
 
 The bearer-authenticated protocol is `GET /ha/v1/info` and `POST /ha/v1/turn`,
 version 1. Only final utterances are submitted. Request IDs must never be reused

@@ -18,12 +18,15 @@ from .api import (
 )
 from .const import (
     CONF_CORE_URL,
+    CONF_AUTH_METHOD,
+    CONF_PAIRING_CORE_ID,
     CONF_PROFILE_ID,
     CONF_TIMER_OUTPUTS,
     CONF_TOKEN,
     DOMAIN,
     validate_timer_outputs,
 )
+from .pairing import DATA_PAIRING, PairingError, pairing_requests
 
 
 def _profile_choices(info: dict[str, Any], retained_profile_id: str | None = None):
@@ -93,6 +96,96 @@ async def _validate_timer_outputs(hass, value):
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
+    async def _start_pairing(self, core_url, timer_outputs, *, reconfigure=False):
+        await self.async_set_unique_id(DOMAIN)
+        if reconfigure:
+            self._abort_if_unique_id_mismatch()
+        else:
+            self._abort_if_unique_id_configured()
+        core_url = normalize_core_url(core_url)
+        requests = pairing_requests(self.hass)
+        proposal = requests.begin(self.flow_id, core_url)
+        client = CoreClient(async_get_clientsession(self.hass), core_url, "", timeout=15)
+        try:
+            response = await client.async_request_pairing(proposal.pairing_id, proposal.challenge)
+            proposal = requests.get(proposal.pairing_id)
+            offer = proposal.offer
+            if (response.get("version") != 1 or response.get("status") != "pending"
+                    or response.get("core_id") != offer["core_id"]
+                    or response.get("replacing") != offer["replacing"]):
+                raise PairingError("The Core response did not match its authenticated offer")
+        except BaseException:
+            requests.remove_flow(self.flow_id)
+            raise
+        self._pending_config = {
+            CONF_CORE_URL: core_url, CONF_TIMER_OUTPUTS: timer_outputs,
+            "pairing_id": proposal.pairing_id, "reconfigure": reconfigure,
+            "profile_choices": _profile_choices(offer["info"]),
+        }
+        return await self.async_step_pairing()
+
+    async def async_step_pairing(self, user_input=None):
+        pending = self._pending_config
+        requests = pairing_requests(self.hass)
+        try:
+            proposal = requests.get(pending["pairing_id"])
+        except PairingError:
+            return self.async_abort(reason="pairing_expired")
+        offer = proposal.offer
+        errors = {}
+        if user_input is not None:
+            profile_id = user_input.get(CONF_PROFILE_ID, "")
+            if not isinstance(profile_id, str) or profile_id not in {
+                choice["value"] for choice in pending["profile_choices"]
+            }:
+                errors["base"] = "invalid_persona"
+            else:
+                client = CoreClient(async_get_clientsession(self.hass), proposal.core_url,
+                                    offer["credential"], timeout=15)
+                try:
+                    activated = await client.async_complete_pairing(proposal.pairing_id, proposal.challenge)
+                    if activated.get("core_id") != offer["core_id"]:
+                        raise CoreProtocolError("The activated Core identity changed")
+                    info = await client.async_get_info()
+                    client.validate_info(info)
+                    if profile_id and profile_id not in {
+                        choice["value"] for choice in _profile_choices(info)
+                    }:
+                        raise CoreProtocolError("The selected persona is no longer available")
+                except (CoreError, ValueError):
+                    # Activation may already be durable. Only a deliberate user
+                    # resubmission repeats this idempotent pairing operation.
+                    errors["base"] = "pairing_incomplete"
+                else:
+                    data = {CONF_CORE_URL: proposal.core_url, CONF_TOKEN: offer["credential"],
+                            CONF_AUTH_METHOD: "paired", CONF_PAIRING_CORE_ID: offer["core_id"],
+                            CONF_PROFILE_ID: profile_id, CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS]}
+                    if pending["reconfigure"]:
+                        result = self.async_update_reload_and_abort(
+                            self._get_reconfigure_entry(), data_updates=data,
+                            options={CONF_PROFILE_ID: profile_id,
+                                     CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS]},
+                            reason="reconfigure_successful")
+                    else:
+                        result = self.async_create_entry(title="SmartHome Assistant", data=data)
+                    requests.remove_flow(self.flow_id)
+                    return result
+        return self.async_show_form(
+            step_id="pairing", data_schema=self._persona_schema(pending["profile_choices"]),
+            errors=errors, description_placeholders={
+                "core_url": proposal.core_url, "core_id": offer["core_id"],
+                "replacement": ("This replaces this Core's existing automatic credential."
+                                if offer["replacing"] else "This creates a new connection."),
+            })
+
+    @callback
+    def async_remove(self):
+        # HA calls this on both successful completion and cancellation. A removed
+        # flow can never accept a late credential offer or grant approval.
+        requests = self.hass.data.get(DATA_PAIRING)
+        if requests is not None:
+            requests.remove_flow(self.flow_id)
+
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         errors = {}
         if user_input is not None:
@@ -106,6 +199,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     step_id="user", data_schema=self._user_schema(), errors=errors,
                 )
 
+            if not str(user_input.get(CONF_TOKEN) or "").strip():
+                try:
+                    return await self._start_pairing(user_input[CONF_CORE_URL], timer_outputs)
+                except (CoreError, PairingError, ValueError, KeyError):
+                    errors["base"] = "pairing_failed"
+                    return self.async_show_form(step_id="user", data_schema=self._user_schema(), errors=errors)
             try:
                 core_url, info = await _validate_core(
                     self.hass, user_input[CONF_CORE_URL], user_input[CONF_TOKEN],
@@ -157,7 +256,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _user_schema():
         return probatio.Schema({
             probatio.Required(CONF_CORE_URL): selector.TextSelector(),
-            probatio.Required(CONF_TOKEN): selector.TextSelector(
+            probatio.Optional(CONF_TOKEN, default=""): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD),
             ),
             probatio.Optional(CONF_TIMER_OUTPUTS, default=dict): selector.ObjectSelector(),
@@ -187,6 +286,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     step_id="reconfigure", data_schema=self._reconfigure_schema(entry), errors=errors,
                 )
 
+            if not str(user_input.get(CONF_TOKEN) or "").strip():
+                try:
+                    return await self._start_pairing(user_input[CONF_CORE_URL], timer_outputs, reconfigure=True)
+                except (CoreError, PairingError, ValueError, KeyError):
+                    errors["base"] = "pairing_failed"
+                    return self.async_show_form(step_id="reconfigure", data_schema=self._reconfigure_schema(entry), errors=errors)
             try:
                 core_url, info = await _validate_core(
                     self.hass, user_input[CONF_CORE_URL], user_input[CONF_TOKEN],
@@ -229,6 +334,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data_updates={
                         CONF_CORE_URL: pending[CONF_CORE_URL],
                         CONF_TOKEN: pending[CONF_TOKEN],
+                        CONF_AUTH_METHOD: "manual",
+                        CONF_PAIRING_CORE_ID: None,
                         CONF_PROFILE_ID: profile_id,
                         CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
                     },
@@ -249,7 +356,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _reconfigure_schema(entry):
         return probatio.Schema({
             probatio.Required(CONF_CORE_URL, default=entry.data[CONF_CORE_URL]): selector.TextSelector(),
-            probatio.Required(CONF_TOKEN, default=entry.data[CONF_TOKEN]): selector.TextSelector(
+            probatio.Optional(CONF_TOKEN, default=(
+                "" if entry.data.get(CONF_AUTH_METHOD) == "paired" else entry.data[CONF_TOKEN]
+            )): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD),
             ),
             probatio.Optional(CONF_TIMER_OUTPUTS, default=entry.options.get(

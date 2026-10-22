@@ -3,10 +3,10 @@
     "step": {
       "user": {
         "title": "Connect to SmartHome Core",
-        "description": "Enter the Core connection and any enhanced timer output mappings. SmartHome Core handles conversation and execution; Home Assistant owns voice activation and speech output.",
+        "description": "Enter Core's URL. Leave the manual token empty to pair using Core's existing HA access, then approve the connection. An existing manual Core credential remains supported. Home Assistant owns voice and speech output.",
         "data": {
           "core_url": "Core URL",
-          "token": "Bearer token",
+          "token": "Manual bearer token (optional)",
           "timer_outputs": "Enhanced timer output mapping (optional)"
         }
       },
@@ -17,12 +17,17 @@
           "profile_id": "Persona"
         }
       },
+      "pairing": {
+        "title": "Approve SmartHome Core pairing",
+        "description": "Connect to {core_url}, Core identity {core_id}? {replacement} Approving saves a new credential automatically. The persona affects wording only. HTTP connections rely on your trusted home network; use HTTPS on untrusted networks.",
+        "data": {"profile_id": "Persona"}
+      },
       "reconfigure": {
         "title": "Reconfigure SmartHome Core",
-        "description": "Update the Core connection and enhanced timer output mappings.",
+        "description": "Update the Core connection and timer mappings. Leave the manual token empty to pair again; approval replaces Core's previous automatic credential.",
         "data": {
           "core_url": "Core URL",
-          "token": "Bearer token",
+          "token": "Manual bearer token (optional)",
           "timer_outputs": "Enhanced timer output mapping (optional)"
         }
       },
@@ -39,10 +44,13 @@
       "cannot_connect": "Could not connect to Core. Check its URL and availability.",
       "unsupported_protocol": "Core does not support protocol version 1.",
       "invalid_persona": "Choose a persona offered by Core or keep the saved persona.",
+      "pairing_failed": "Pairing could not start. Check that Core uses the same HA instance and an administrator HA_TOKEN. If CORE_HA_AGENT_TOKEN is set, enter that manual token or clear it and restart Core. An abandoned pairing can take five minutes to expire.",
+      "pairing_incomplete": "Pairing was not confirmed. No assistant action was started. Submit again to check this pairing, or start a new flow after it expires.",
       "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their timer output mapping."
     },
     "abort": {
-      "reconfigure_successful": "Core connection updated."
+      "reconfigure_successful": "Core connection updated.",
+      "pairing_expired": "This pairing request expired or was cancelled. Start setup again."
     }
   },
   "options": {

@@ -6,8 +6,10 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import CoreClient
-from .const import CONF_CORE_URL, CONF_TOKEN, CONF_TIMER_OUTPUTS, DOMAIN, PLATFORMS
+import logging
+
+from .api import CoreClient, CoreError
+from .const import CONF_AUTH_METHOD, CONF_CORE_URL, CONF_TOKEN, CONF_TIMER_OUTPUTS, DOMAIN, PLATFORMS
 from .jobs_setup import async_setup_jobs, async_configure_outputs
 
 
@@ -37,3 +39,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Revoke an integration-owned credential; manual credentials stay owner-managed."""
+    if entry.data.get(CONF_AUTH_METHOD) != "paired":
+        return
+    client = CoreClient(async_get_clientsession(hass), entry.data[CONF_CORE_URL], entry.data[CONF_TOKEN])
+    try:
+        await client.async_revoke_pairing()
+    except CoreError:
+        logging.getLogger(__name__).warning(
+            "Core pairing could not be revoked. Re-pair or clear Core's pairing state when it is available.")

@@ -57,12 +57,26 @@ class CoreClient:
     async def async_turn(self, payload: dict) -> dict:
         return await self._request("POST", "/ha/v1/turn", json=payload)
 
+    async def async_request_pairing(self, pairing_id: str, challenge: str) -> dict:
+        return await self._request("POST", "/ha/v1/pairing/request", json={
+            "pairing_id": pairing_id, "challenge": challenge})
+
+    async def async_complete_pairing(self, pairing_id: str, challenge: str) -> dict:
+        result = await self._request("POST", "/ha/v1/pairing/complete", json={
+            "pairing_id": pairing_id, "challenge": challenge})
+        if result.get("version") != 1 or result.get("status") != "paired":
+            raise CoreProtocolError("Core did not confirm pairing")
+        return result
+
+    async def async_revoke_pairing(self) -> dict:
+        return await self._request("DELETE", "/ha/v1/pairing")
+
     async def _request(self, method: str, path: str, *, json=None) -> dict:
         try:
             async with self.session.request(
                 method,
                 f"{self.core_url}{path}",
-                headers=self.headers,
+                headers=self.headers if self.token else {"Content-Type": "application/json"},
                 json=json,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:

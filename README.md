@@ -22,9 +22,10 @@ jobs in HA's separate persistent storage.
 
 ## Configure
 
-1. Run SmartHome Core and configure its dedicated HA-agent bearer credential.
-   Enter Core's reachable URL and that credential in this integration.
-   Then choose its **Persona**, or keep Core's configured default. This changes
+1. Run SmartHome Core with its administrator HA connection configured. Leave
+   the optional manual `CORE_HA_AGENT_TOKEN` empty. In this integration enter
+   Core's reachable URL, leave **Manual Core credential** empty, then approve
+   pairing and choose a **Persona**, or keep Core's configured default. This changes
    conversational wording; HA continues to own wake words and TTS voices.
 2. Create a dedicated HA voice pipeline selecting **SmartHome Assistant** and
    your STT/TTS. Disable **Prefer handling commands locally** so native intents
@@ -51,6 +52,35 @@ jobs in HA's separate persistent storage.
 Core's own HA token needs administrator access for catalog metadata and job
 commands. Configure that token in Core; it is separate from this integration's
 bearer credential. Keep credentials out of repository files and URLs.
+
+### Pairing and connection security
+
+Automatic pairing creates the separate Core credential for you; entering the Core
+URL is still required. HA opens a five-minute setup request. Core sends its offer
+back through its configured, administrator-authenticated HA connection. Only your
+approval activates it. Other LAN clients cannot obtain a credential by calling the
+pairing endpoint. Manual credentials remain supported: set the same dedicated
+secret in Core's `CORE_HA_AGENT_TOKEN` and HA's optional manual field instead.
+A nonempty manual override disables automatic pairing.
+
+HTTP is supported on a trusted home network, as is HTTPS with normal certificate
+verification. **HTTP does not encrypt credentials or protect them from interception.**
+Use HTTPS outside that trusted network. Never put a credential in a URL.
+
+Reconfigure the integration and approve pairing again to replace an automatic
+credential. The previous credential stops working only after approval. Removing
+the integration revokes its automatic credential when Core is reachable; this
+does not delete timers or jobs. Offline removal cannot revoke the remote key.
+For recovery, stop Core, delete only `data/ha-agent/pairing.json` in Core's data
+folder, restart and pair again. Preserve `requests.db` and HA job storage. Core
+stores only the credential hash in that file; HA stores the actual credential in
+its private config entry. Protect both systems' data and backups.
+
+An aborted request grants no access. An abandoned Core proposal expires within
+five minutes; restart Core to clear it sooner. If approval times out, Core may
+already have saved the credential. Resubmit the approval deliberately while the
+HA form is active, or start pairing again after expiry. Setup never retries home
+actions or changes to another conversation engine.
 
 ## Dependencies and limits
 

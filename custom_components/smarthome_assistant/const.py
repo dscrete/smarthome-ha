@@ -6,6 +6,8 @@ PLATFORMS = ("conversation",)
 
 CONF_CORE_URL = "core_url"
 CONF_TOKEN = "token"
+CONF_AUTH_METHOD = "auth_method"
+CONF_PAIRING_CORE_ID = "pairing_core_id"
 CONF_PROFILE_ID = "profile_id"
 CONF_TIMER_OUTPUTS = "timer_outputs"
 
