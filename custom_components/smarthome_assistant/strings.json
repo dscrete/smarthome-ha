@@ -3,16 +3,18 @@
     "step": {
       "user": {
         "title": "Connect to SmartHome Core",
-        "description": "Enter Core's URL. Leave the manual token empty to pair using Core's existing HA access, then approve the connection. An existing manual Core credential remains supported. Home Assistant owns voice and speech output.",
+        "description": "Enter Core's URL. Leave the manual token empty to pair using Core's existing HA access, then approve the connection. An existing manual Core credential remains supported. Speech platforms connect to the SmartHome speech service on port 8773 by default; disable them to use other Home Assistant engines.",
         "data": {
           "core_url": "Core URL",
           "token": "Manual bearer token (optional)",
-          "timer_outputs": "Enhanced timer output mapping (optional)"
+          "timer_outputs": "Enhanced timer output mapping (optional)",
+          "speech_enabled": "Set up SmartHome speech platforms",
+          "speech_url": "Speech service URL (optional; defaults to Core host on port 8773)"
         }
       },
       "persona": {
         "title": "Choose a persona",
-        "description": "Select the persona this SmartHome Assistant agent will use. Home Assistant continues to own wake word and speech output.",
+        "description": "Select the persona this SmartHome Assistant agent will use. Home Assistant continues to own wake word and pipeline selection.",
         "data": {
           "profile_id": "Persona"
         }
@@ -24,16 +26,18 @@
       },
       "reconfigure": {
         "title": "Reconfigure SmartHome Core",
-        "description": "Update the Core connection and timer mappings. Leave the manual token empty to pair again; approval replaces Core's previous automatic credential.",
+        "description": "Update the Core connection, timer mappings, and optional speech service URL. Leave the manual token empty to pair again; approval replaces Core's previous automatic credential.",
         "data": {
           "core_url": "Core URL",
           "token": "Manual bearer token (optional)",
-          "timer_outputs": "Enhanced timer output mapping (optional)"
+          "timer_outputs": "Enhanced timer output mapping (optional)",
+          "speech_enabled": "Set up SmartHome speech platforms",
+          "speech_url": "Speech service URL (optional; defaults to Core host on port 8773)"
         }
       },
       "reconfigure_persona": {
         "title": "Choose a persona",
-        "description": "Select the persona this SmartHome Assistant agent will use. Home Assistant continues to own wake word and speech output.",
+        "description": "Select the persona this SmartHome Assistant agent will use. Home Assistant continues to own wake word and pipeline selection.",
         "data": {
           "profile_id": "Persona"
         }
@@ -43,6 +47,7 @@
       "invalid_auth": "Core rejected the bearer token.",
       "cannot_connect": "Could not connect to Core. Check its URL and availability.",
       "unsupported_protocol": "Core does not support protocol version 1.",
+      "invalid_speech_settings": "Speech service URL must be a valid HTTP(S) URL without credentials.",
       "invalid_persona": "Choose a persona offered by Core or keep the saved persona.",
       "pairing_failed": "Pairing could not start. Check that Core uses the same HA instance and an administrator HA_TOKEN. If CORE_HA_AGENT_TOKEN is set, enter that manual token or clear it and restart Core. An abandoned pairing can take five minutes to expire.",
       "pairing_incomplete": "Pairing was not confirmed. No assistant action was started. Submit again to check this pairing, or start a new flow after it expires.",
@@ -56,16 +61,19 @@
   "options": {
     "step": {
       "init": {
-        "title": "Persona and timer outputs",
-        "description": "Home Assistant owns wake word and speech output. Enhanced timer mappings select compatible acknowledged EchoMuse exchange actions.",
+        "title": "Persona, speech, and timer outputs",
+        "description": "Choose whether SmartHome supplies STT and TTS engines. Enhanced timer mappings select compatible acknowledged EchoMuse exchange actions.",
         "data": {
           "profile_id": "Persona",
-          "timer_outputs": "Enhanced timer output mapping (optional)"
+          "timer_outputs": "Enhanced timer output mapping (optional)",
+          "speech_enabled": "Set up SmartHome speech platforms",
+          "speech_url": "Speech service URL (optional; defaults to Core host on port 8773)"
         }
       }
     },
     "error": {
       "invalid_persona": "Choose a persona offered by Core or keep the saved persona.",
+      "invalid_speech_settings": "Speech service URL must be a valid HTTP(S) URL without credentials.",
       "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their timer output mapping."
     }
   }

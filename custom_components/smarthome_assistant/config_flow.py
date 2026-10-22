@@ -21,12 +21,33 @@ from .const import (
     CONF_AUTH_METHOD,
     CONF_PAIRING_CORE_ID,
     CONF_PROFILE_ID,
+    CONF_SPEECH_ENABLED,
+    CONF_SPEECH_URL,
     CONF_TIMER_OUTPUTS,
     CONF_TOKEN,
     DOMAIN,
     validate_timer_outputs,
 )
 from .pairing import DATA_PAIRING, PairingError, pairing_requests
+from .speech import speech_base_url
+
+
+def _speech_settings(user_input, entry=None):
+    """Validate and normalize optional speech service settings."""
+    enabled_default = True if entry is None else entry.options.get(
+        CONF_SPEECH_ENABLED, entry.data.get(CONF_SPEECH_ENABLED, True),
+    )
+    url_default = "" if entry is None else entry.options.get(
+        CONF_SPEECH_URL, entry.data.get(CONF_SPEECH_URL, ""),
+    )
+    enabled = user_input.get(CONF_SPEECH_ENABLED, enabled_default)
+    url = user_input.get(CONF_SPEECH_URL, url_default)
+    if not isinstance(enabled, bool) or not isinstance(url, str):
+        raise ValueError("Invalid speech settings")
+    url = url.strip()
+    if url:
+        url = speech_base_url("http://localhost", url)
+    return {CONF_SPEECH_ENABLED: enabled, CONF_SPEECH_URL: url}
 
 
 def _profile_choices(info: dict[str, Any], retained_profile_id: str | None = None):
@@ -96,7 +117,7 @@ async def _validate_timer_outputs(hass, value):
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
-    async def _start_pairing(self, core_url, timer_outputs, *, reconfigure=False):
+    async def _start_pairing(self, core_url, timer_outputs, speech_settings, *, reconfigure=False):
         await self.async_set_unique_id(DOMAIN)
         if reconfigure:
             self._abort_if_unique_id_mismatch()
@@ -119,6 +140,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             raise
         self._pending_config = {
             CONF_CORE_URL: core_url, CONF_TIMER_OUTPUTS: timer_outputs,
+            **speech_settings,
             "pairing_id": proposal.pairing_id, "reconfigure": reconfigure,
             "profile_choices": _profile_choices(offer["info"]),
         }
@@ -160,11 +182,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data = {CONF_CORE_URL: proposal.core_url, CONF_TOKEN: offer["credential"],
                             CONF_AUTH_METHOD: "paired", CONF_PAIRING_CORE_ID: offer["core_id"],
                             CONF_PROFILE_ID: profile_id, CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS]}
+                    data.update({key: pending[key] for key in (CONF_SPEECH_ENABLED, CONF_SPEECH_URL)})
                     if pending["reconfigure"]:
                         result = self.async_update_reload_and_abort(
                             self._get_reconfigure_entry(), data_updates=data,
                             options={CONF_PROFILE_ID: profile_id,
-                                     CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS]},
+                                     CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
+                                     CONF_SPEECH_ENABLED: pending[CONF_SPEECH_ENABLED],
+                                     CONF_SPEECH_URL: pending[CONF_SPEECH_URL]},
                             reason="reconfigure_successful")
                     else:
                         result = self.async_create_entry(title="SmartHome Assistant", data=data)
@@ -199,9 +224,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     step_id="user", data_schema=self._user_schema(), errors=errors,
                 )
 
+            try:
+                speech_settings = _speech_settings(user_input)
+            except ValueError:
+                return self.async_show_form(step_id="user", data_schema=self._user_schema(),
+                                            errors={"base": "invalid_speech_settings"})
+
             if not str(user_input.get(CONF_TOKEN) or "").strip():
                 try:
-                    return await self._start_pairing(user_input[CONF_CORE_URL], timer_outputs)
+                    return await self._start_pairing(user_input[CONF_CORE_URL], timer_outputs, speech_settings)
                 except (CoreError, PairingError, ValueError, KeyError):
                     errors["base"] = "pairing_failed"
                     return self.async_show_form(step_id="user", data_schema=self._user_schema(), errors=errors)
@@ -220,6 +251,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_CORE_URL: core_url,
                     CONF_TOKEN: user_input[CONF_TOKEN].strip(),
                     CONF_TIMER_OUTPUTS: timer_outputs,
+                    **speech_settings,
                     "profile_choices": _profile_choices(info),
                 }
                 return await self.async_step_persona()
@@ -242,6 +274,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_CORE_URL: pending[CONF_CORE_URL],
                     CONF_TOKEN: pending[CONF_TOKEN],
                     CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
+                    CONF_SPEECH_ENABLED: pending[CONF_SPEECH_ENABLED],
+                    CONF_SPEECH_URL: pending[CONF_SPEECH_URL],
                 }
                 if profile_id:
                     data[CONF_PROFILE_ID] = profile_id
@@ -260,6 +294,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD),
             ),
             probatio.Optional(CONF_TIMER_OUTPUTS, default=dict): selector.ObjectSelector(),
+            probatio.Optional(CONF_SPEECH_ENABLED, default=True): selector.BooleanSelector(),
+            probatio.Optional(CONF_SPEECH_URL, default=""): selector.TextSelector(),
         })
 
     @staticmethod
@@ -286,9 +322,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     step_id="reconfigure", data_schema=self._reconfigure_schema(entry), errors=errors,
                 )
 
+            try:
+                speech_settings = _speech_settings(user_input, entry)
+            except ValueError:
+                return self.async_show_form(step_id="reconfigure", data_schema=self._reconfigure_schema(entry),
+                                            errors={"base": "invalid_speech_settings"})
+
             if not str(user_input.get(CONF_TOKEN) or "").strip():
                 try:
-                    return await self._start_pairing(user_input[CONF_CORE_URL], timer_outputs, reconfigure=True)
+                    return await self._start_pairing(user_input[CONF_CORE_URL], timer_outputs,
+                                                     speech_settings, reconfigure=True)
                 except (CoreError, PairingError, ValueError, KeyError):
                     errors["base"] = "pairing_failed"
                     return self.async_show_form(step_id="reconfigure", data_schema=self._reconfigure_schema(entry), errors=errors)
@@ -307,6 +350,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_CORE_URL: core_url,
                     CONF_TOKEN: user_input[CONF_TOKEN].strip(),
                     CONF_TIMER_OUTPUTS: timer_outputs,
+                    **speech_settings,
                     "profile_choices": _profile_choices(info, _current_profile_id(entry)),
                 }
                 return await self.async_step_reconfigure_persona()
@@ -338,10 +382,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_PAIRING_CORE_ID: None,
                         CONF_PROFILE_ID: profile_id,
                         CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
+                        CONF_SPEECH_ENABLED: pending[CONF_SPEECH_ENABLED],
+                        CONF_SPEECH_URL: pending[CONF_SPEECH_URL],
                     },
                     options={
                         CONF_PROFILE_ID: profile_id,
                         CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
+                        CONF_SPEECH_ENABLED: pending[CONF_SPEECH_ENABLED],
+                        CONF_SPEECH_URL: pending[CONF_SPEECH_URL],
                     },
                     reason="reconfigure_successful",
                 )
@@ -364,6 +412,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             probatio.Optional(CONF_TIMER_OUTPUTS, default=entry.options.get(
                 CONF_TIMER_OUTPUTS, entry.data.get(CONF_TIMER_OUTPUTS, {}),
             )): selector.ObjectSelector(),
+            probatio.Optional(CONF_SPEECH_ENABLED, default=entry.options.get(
+                CONF_SPEECH_ENABLED, entry.data.get(CONF_SPEECH_ENABLED, True),
+            )): selector.BooleanSelector(),
+            probatio.Optional(CONF_SPEECH_URL, default=entry.options.get(
+                CONF_SPEECH_URL, entry.data.get(CONF_SPEECH_URL, ""),
+            )): selector.TextSelector(),
         })
 
     @staticmethod
@@ -400,9 +454,15 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             }:
                 errors["base"] = "invalid_persona"
             else:
+                try:
+                    speech_settings = _speech_settings(user_input, self.config_entry)
+                except ValueError:
+                    return self.async_show_form(step_id="init", data_schema=self._options_schema(),
+                                                errors={"base": "invalid_speech_settings"})
                 return self.async_create_entry(
                     title="",
-                    data={CONF_PROFILE_ID: profile_id, CONF_TIMER_OUTPUTS: timer_outputs},
+                    data={CONF_PROFILE_ID: profile_id, CONF_TIMER_OUTPUTS: timer_outputs,
+                          **speech_settings},
                 )
 
         return self.async_show_form(step_id="init", data_schema=self._options_schema(), errors=errors)
@@ -426,4 +486,10 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
         return probatio.Schema({
             probatio.Optional(CONF_PROFILE_ID, default=current_profile): _persona_selector(choices),
             probatio.Optional(CONF_TIMER_OUTPUTS, default=current_timer_outputs): selector.ObjectSelector(),
+            probatio.Optional(CONF_SPEECH_ENABLED, default=self.config_entry.options.get(
+                CONF_SPEECH_ENABLED, self.config_entry.data.get(CONF_SPEECH_ENABLED, True),
+            )): selector.BooleanSelector(),
+            probatio.Optional(CONF_SPEECH_URL, default=self.config_entry.options.get(
+                CONF_SPEECH_URL, self.config_entry.data.get(CONF_SPEECH_URL, ""),
+            )): selector.TextSelector(),
         })

@@ -1,12 +1,12 @@
 # SmartHome Assistant for Home Assistant
 
-One integration for the SmartHome HA Assist agent, durable jobs and HA-owned
+One integration for the SmartHome HA Assist agent, local STT/TTS, durable jobs and HA-owned
 timer delivery to compatible ESPHome Assist satellites. HA runs the voice pipeline; SmartHome Core interprets
 requests and validates home actions. Core is installed separately.
 
 ## Install and update
 
-The current stable release is **1.3.1**, using the included HA-owned job backend.
+The current stable release is **1.4.0**, using the included HA-owned job backend.
 No beta selection is required in HACS. The software verification does not establish
 physical satellite performance; the delivery limits below still apply.
 
@@ -31,12 +31,23 @@ jobs in HA's separate persistent storage.
    Core's reachable URL, leave **Manual Core credential** empty, then approve
    pairing and choose a **Persona**, or keep Core's configured default. This changes
    conversational wording; HA continues to own wake words and TTS voices.
-2. Create a dedicated HA voice pipeline selecting **SmartHome Assistant** and
-   your STT/TTS. Disable **Prefer handling commands locally** so native intents
+2. Update the separate SmartHome Docker stack and fetch its saved voices with
+   `git lfs pull --include="pocket-tts/voices/*"`. Version 1.4 starts the existing
+   STT and Pocket TTS services plus an authenticated speech connector by default.
+   In **Configure**, keep **Set up SmartHome speech platforms** enabled. The
+   speech URL defaults to the Core host on port **8773**; set it explicitly for a
+   reverse proxy or different host/port. It uses the already paired/manual
+   credential, with no second token to copy. Only publish the connector to HA;
+   keep the underlying STT/TTS service ports private.
+3. Create a dedicated HA voice pipeline selecting **SmartHome Assistant** for
+   conversation, speech-to-text and text-to-speech. Pick the saved TTS voice in
+   HA. English is currently advertised for Pocket TTS; STT advertises its configured
+   language. Other installed HA speech engines remain selectable: disable our
+   speech-platform setup if they are preferred. Disable **Prefer handling commands locally** so native intents
    cannot bypass Core's backend and validation. Assign the intended satellite.
-3. For EchoMuse, choose its **Home Assistant** voice backend and keep its normal
+4. For EchoMuse, choose its **Home Assistant** voice backend and keep its normal
    controller online. HA's standard ESPHome integration supplies the connection.
-4. Standard timer-capable ESPHome satellites, including unmodified EchoMuse, use
+5. Standard timer-capable ESPHome satellites, including unmodified EchoMuse, use
    their existing HA connection automatically. No custom controller action or
    output mapping is needed. See the recovery limits below.
    For optional enhanced EchoMuse delivery, open **Configure**. **Enhanced timer
@@ -50,12 +61,25 @@ jobs in HA's separate persistent storage.
 
    Enhanced delivery requires the compatible fork controller. The old Gateway
    binding field is retired; any saved legacy values are ignored.
-5. Configure a TTS voice in HA's preferred Assist pipeline for timer names.
+6. Configure a TTS voice in HA's preferred Assist pipeline for timer names.
    Missing or disconnected outputs reject a new timer before persistence.
 
 Core's own HA token needs administrator access for catalog metadata and job
 commands. Configure that token in Core; it is separate from this integration's
 bearer credential. Keep credentials out of repository files and URLs.
+
+Speech engines appear once the connector and models are ready. A speech outage
+does not disable the conversation agent; HA retries unavailable speech platforms.
+On a nonstandard deployment, check **Configure → Speech service URL** and that HA
+can reach that URL. Selecting a conversation agent alone never selects its STT/TTS.
+If STT or TTS remains absent, inspect `docker compose logs speech-bridge stt tts`.
+Do not install Wyoming to connect these HTTP services: the integration registers
+native HA speech entities directly.
+
+The connector reads Core's existing pairing hash from a read-only mount. Pairing
+rotation/revocation applies to speech too. Core does not relay speech; stopping Core
+does not stop the connector or engines, including timer-name synthesis. Models stay
+on the separate SmartHome host; the HA integration does not install them.
 
 ### Pairing and connection security
 

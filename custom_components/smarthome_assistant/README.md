@@ -1,7 +1,8 @@
 # SmartHome Assistant for HA Assist
 
-This project-owned integration is opt-in. It exposes a conversation entity;
-Home Assistant runs STT, ordinary TTS, and follow-up listening. Core owns final-text
+This project-owned integration is opt-in. It exposes conversation, STT and TTS entities;
+Home Assistant runs the pipeline and follow-up listening. The paired speech connector
+calls our existing STT/Pocket TTS engines. Core owns final-text
 interpretation, validation, exact-target execution, confirmation and trusted replies.
 The integration does not install a model or change other pipelines.
 
@@ -19,8 +20,14 @@ The integration does not install a model or change other pipelines.
    network but does not encrypt credentials; use HTTPS outside it. Never put
    credentials in the URL. Choose a **Persona**, or keep Core's default. This is a
    wording style only; configure wake word and TTS voice in HA/the satellite.
-4. Create a separate HA voice assistant/pipeline selecting the SmartHome
-   conversation entity and your existing STT/TTS. **Disable “Prefer handling
+4. Update the separate SmartHome stack and fetch its LFS-backed voices. Keep
+   **Set up SmartHome speech platforms** enabled in Configure; the paired speech
+   connector defaults to Core's host on port 8773. Set **Speech service URL** for
+   a different host/port or reverse proxy. Create a separate HA voice pipeline,
+   selecting **SmartHome Assistant** for conversation, STT and TTS, then choose a
+   TTS voice. Existing HA engines can still be selected instead. See the full
+   [speech setup](https://github.com/dscrete/smarthome-ha#configure).
+   **Disable “Prefer handling
    commands locally”**. Otherwise native HA intents, including timers, can bypass
    Core's backend, validation and confirmation.
 5. Assign only the intended test satellite to that pipeline. In EchoMuse,

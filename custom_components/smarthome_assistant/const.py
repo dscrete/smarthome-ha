@@ -2,7 +2,9 @@
 from typing import Any
 
 DOMAIN = "smarthome_assistant"
-PLATFORMS = ("conversation",)
+CONVERSATION_PLATFORM = "conversation"
+SPEECH_PLATFORMS = ("stt", "tts")
+PLATFORMS = (CONVERSATION_PLATFORM, *SPEECH_PLATFORMS)
 
 CONF_CORE_URL = "core_url"
 CONF_TOKEN = "token"
@@ -10,6 +12,10 @@ CONF_AUTH_METHOD = "auth_method"
 CONF_PAIRING_CORE_ID = "pairing_core_id"
 CONF_PROFILE_ID = "profile_id"
 CONF_TIMER_OUTPUTS = "timer_outputs"
+CONF_SPEECH_ENABLED = "speech_enabled"
+CONF_SPEECH_URL = "speech_url"
+
+DATA_SPEECH_CLIENT = "speech_client"
 
 _TIMER_EXCHANGE_SUFFIX = "_smarthome_timer_exchange_v1"
 

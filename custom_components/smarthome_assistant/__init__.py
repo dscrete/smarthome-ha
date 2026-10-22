@@ -9,8 +9,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import logging
 
 from .api import CoreClient, CoreError
-from .const import CONF_AUTH_METHOD, CONF_CORE_URL, CONF_TOKEN, CONF_TIMER_OUTPUTS, DOMAIN, PLATFORMS
+from .const import (
+    CONF_AUTH_METHOD, CONF_CORE_URL, CONF_SPEECH_ENABLED,
+    CONF_TOKEN, CONF_TIMER_OUTPUTS, CONVERSATION_PLATFORM, DATA_SPEECH_CLIENT,
+    DOMAIN, PLATFORMS, SPEECH_PLATFORMS,
+)
 from .jobs_setup import async_setup_jobs, async_configure_outputs
+from .speech import SpeechClient, speech_base_url_for_entry
 
 
 async def async_setup(hass: HomeAssistant, config) -> bool:
@@ -25,19 +30,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_TIMER_OUTPUTS, entry.data.get(CONF_TIMER_OUTPUTS, {})))
     session = async_get_clientsession(hass)
     client = CoreClient(session, entry.data[CONF_CORE_URL], entry.data[CONF_TOKEN])
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = client
-    await hass.config_entries.async_forward_entry_setups(
-        entry, [Platform(platform) for platform in PLATFORMS],
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    domain_data[entry.entry_id] = client
+    speech_enabled = entry.options.get(
+        CONF_SPEECH_ENABLED, entry.data.get(CONF_SPEECH_ENABLED, True),
     )
+    if speech_enabled:
+        domain_data.setdefault(DATA_SPEECH_CLIENT, {})[entry.entry_id] = SpeechClient(
+            session, speech_base_url_for_entry(entry), entry.data[CONF_TOKEN],
+        )
+    await hass.config_entries.async_forward_entry_setups(entry, [Platform(CONVERSATION_PLATFORM)])
+    if speech_enabled:
+        try:
+            await hass.config_entries.async_forward_entry_setups(
+                entry, [Platform(platform) for platform in SPEECH_PLATFORMS],
+            )
+        except Exception:
+            # Speech backends are optional. Their outage must not take down the
+            # independently useful conversation agent.
+            logging.getLogger(__name__).warning(
+                "SmartHome speech platforms could not be set up; conversation remains available",
+                exc_info=True,
+            )
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unloaded = await hass.config_entries.async_unload_platforms(
-        entry, [Platform(platform) for platform in PLATFORMS],
-    )
+    unloaded = await hass.config_entries.async_unload_platforms(entry, [Platform(p) for p in PLATFORMS])
     if unloaded:
-        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        data = hass.data.get(DOMAIN, {})
+        data.pop(entry.entry_id, None)
+        data.get(DATA_SPEECH_CLIENT, {}).pop(entry.entry_id, None)
     return unloaded
 
 
