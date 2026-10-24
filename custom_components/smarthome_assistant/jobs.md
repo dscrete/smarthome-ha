@@ -25,9 +25,13 @@ takes `outcome`, which is `succeeded|failed|unknown|missed` for scheduled action
 and `undelivered` for timers. List filters are optional `statuses`, `kinds`, and
 exact `source_satellite`; all supplied filters apply together.
 
-The integration installs an administrator-only SmartHome sidebar panel on first
-jobs setup. It shows active countdowns, scheduled action summaries and retained
-history. The panel subscribes with `smarthome_jobs/subscribe`; HA sends an empty
+The integration offers an administrator-only SmartHome sidebar panel, enabled
+through **Configure → Show in sidebar**. This HA integration preference defaults
+to false, also for existing entries without an explicit choice. Disabling the
+panel removes its route without changing jobs, delivery or job API access. An
+enabled panel stays available across ordinary conversation entry unloads; removing
+the config entry removes the panel. It shows active countdowns, scheduled action
+summaries and retained history. The panel subscribes with `smarthome_jobs/subscribe`; HA sends an empty
 invalidation event after each durable saved change, and the panel refreshes via
 `list`. HA removes the listener with the WebSocket connection subscription.
 Cancel and dismissal use the existing request ID and expected revision contract.

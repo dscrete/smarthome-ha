@@ -15,6 +15,7 @@ CONF_PROFILE_ID = "profile_id"
 CONF_TIMER_OUTPUTS = "timer_outputs"
 CONF_SPEECH_ENABLED = "speech_enabled"
 CONF_SPEECH_URL = "speech_url"
+CONF_SHOW_IN_SIDEBAR = "show_in_sidebar"
 
 DATA_SPEECH_CLIENT = "speech_client"
 

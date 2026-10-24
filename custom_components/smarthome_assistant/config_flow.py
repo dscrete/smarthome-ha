@@ -23,6 +23,7 @@ from .const import (
     CONF_PROFILE_ID,
     CONF_SPEECH_ENABLED,
     CONF_SPEECH_URL,
+    CONF_SHOW_IN_SIDEBAR,
     CONF_TIMER_OUTPUTS,
     CONF_TOKEN,
     DOMAIN,
@@ -140,6 +141,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             raise
         self._pending_config = {
             CONF_CORE_URL: core_url, CONF_TIMER_OUTPUTS: timer_outputs,
+            CONF_SHOW_IN_SIDEBAR: (
+                self._get_reconfigure_entry().options.get(CONF_SHOW_IN_SIDEBAR, False)
+                if reconfigure else False
+            ),
             **speech_settings,
             "pairing_id": proposal.pairing_id, "reconfigure": reconfigure,
             "profile_choices": _profile_choices(offer["info"]),
@@ -189,7 +194,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             options={CONF_PROFILE_ID: profile_id,
                                      CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
                                      CONF_SPEECH_ENABLED: pending[CONF_SPEECH_ENABLED],
-                                     CONF_SPEECH_URL: pending[CONF_SPEECH_URL]},
+                                     CONF_SPEECH_URL: pending[CONF_SPEECH_URL],
+                                     CONF_SHOW_IN_SIDEBAR: pending[CONF_SHOW_IN_SIDEBAR]},
                             reason="reconfigure_successful")
                     else:
                         result = self.async_create_entry(title="SmartHome Assistant", data=data)
@@ -390,6 +396,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
                         CONF_SPEECH_ENABLED: pending[CONF_SPEECH_ENABLED],
                         CONF_SPEECH_URL: pending[CONF_SPEECH_URL],
+                        CONF_SHOW_IN_SIDEBAR: entry.options.get(CONF_SHOW_IN_SIDEBAR, False),
                     },
                     reason="reconfigure_successful",
                 )
@@ -449,10 +456,16 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 return self.async_show_form(step_id="init", data_schema=self._options_schema(), errors=errors)
 
             profile_id = user_input.get(CONF_PROFILE_ID, current_profile)
+            show_in_sidebar = user_input.get(
+                CONF_SHOW_IN_SIDEBAR,
+                self.config_entry.options.get(CONF_SHOW_IN_SIDEBAR, False),
+            )
             if not isinstance(profile_id, str) or profile_id not in {
                 option["value"] for option in self._profile_choices
             }:
                 errors["base"] = "invalid_persona"
+            elif not isinstance(show_in_sidebar, bool):
+                errors["base"] = "invalid_sidebar_preference"
             else:
                 try:
                     speech_settings = _speech_settings(user_input, self.config_entry)
@@ -462,7 +475,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 return self.async_create_entry(
                     title="",
                     data={CONF_PROFILE_ID: profile_id, CONF_TIMER_OUTPUTS: timer_outputs,
-                          **speech_settings},
+                          CONF_SHOW_IN_SIDEBAR: show_in_sidebar, **speech_settings},
                 )
 
         return self.async_show_form(step_id="init", data_schema=self._options_schema(), errors=errors)
@@ -492,4 +505,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             probatio.Optional(CONF_SPEECH_URL, default=self.config_entry.options.get(
                 CONF_SPEECH_URL, self.config_entry.data.get(CONF_SPEECH_URL, ""),
             )): selector.TextSelector(),
+            probatio.Optional(CONF_SHOW_IN_SIDEBAR, default=self.config_entry.options.get(
+                CONF_SHOW_IN_SIDEBAR, False,
+            )): selector.BooleanSelector(),
         })

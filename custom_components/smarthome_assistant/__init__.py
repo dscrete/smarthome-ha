@@ -10,11 +10,11 @@ import logging
 
 from .api import CoreClient, CoreError
 from .const import (
-    CONF_AUTH_METHOD, CONF_CORE_URL, CONF_SPEECH_ENABLED,
+    CONF_AUTH_METHOD, CONF_CORE_URL, CONF_SHOW_IN_SIDEBAR, CONF_SPEECH_ENABLED,
     CONF_TOKEN, CONF_TIMER_OUTPUTS, CONVERSATION_PLATFORM, DATA_SPEECH_CLIENT,
     DOMAIN, PLATFORMS, SENSOR_PLATFORM, SPEECH_PLATFORMS,
 )
-from .jobs_setup import async_setup_jobs, async_configure_outputs
+from .jobs_setup import async_setup_jobs, async_configure_outputs, async_configure_panel
 from .speech import SpeechClient, speech_base_url_for_entry
 
 
@@ -28,6 +28,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await async_setup_jobs(hass)
     await async_configure_outputs(hass, entry.options.get(
         CONF_TIMER_OUTPUTS, entry.data.get(CONF_TIMER_OUTPUTS, {})))
+    await async_configure_panel(hass, entry.options.get(CONF_SHOW_IN_SIDEBAR, False))
     session = async_get_clientsession(hass)
     client = CoreClient(session, entry.data[CONF_CORE_URL], entry.data[CONF_TOKEN])
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -68,6 +69,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Revoke an integration-owned credential; manual credentials stay owner-managed."""
+    await async_configure_panel(hass, False)
     if entry.data.get(CONF_AUTH_METHOD) != "paired":
         return
     client = CoreClient(async_get_clientsession(hass), entry.data[CONF_CORE_URL], entry.data[CONF_TOKEN])

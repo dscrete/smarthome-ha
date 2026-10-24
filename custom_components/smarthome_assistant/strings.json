@@ -61,20 +61,22 @@
   "options": {
     "step": {
       "init": {
-        "title": "Persona, speech, and timer outputs",
-        "description": "Choose whether SmartHome supplies STT and TTS engines. Enhanced timer mappings select compatible acknowledged EchoMuse exchange actions.",
+        "title": "Persona, speech, timer outputs, and sidebar",
+        "description": "Choose whether SmartHome supplies STT and TTS engines, and whether its jobs panel appears in the sidebar. Enhanced timer mappings select compatible acknowledged EchoMuse exchange actions.",
         "data": {
           "profile_id": "Persona",
           "timer_outputs": "Enhanced timer output mapping (optional)",
           "speech_enabled": "Set up SmartHome speech platforms",
-          "speech_url": "Speech service URL (optional; defaults to Core host on port 8773)"
+          "speech_url": "Speech service URL (optional; defaults to Core host on port 8773)",
+          "show_in_sidebar": "Show in sidebar"
         }
       }
     },
     "error": {
       "invalid_persona": "Choose a persona offered by Core or keep the saved persona.",
       "invalid_speech_settings": "Speech service URL must be a valid HTTP(S) URL without credentials.",
-      "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their timer output mapping."
+      "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their timer output mapping.",
+      "invalid_sidebar_preference": "Choose whether the SmartHome panel should appear in the sidebar."
     }
   }
 }

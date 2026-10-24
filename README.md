@@ -6,9 +6,10 @@ requests and validates home actions. Core is installed separately.
 
 ## Install and update
 
-The current stable release is **1.6.0**, using the included HA-owned job backend.
-1.6.0 adds the administrator **SmartHome** sidebar panel for timers and scheduled
-actions. The **Voice timers** sensor introduced in 1.5.0 requires compatible
+The current stable release is **1.6.1**, using the included HA-owned job backend.
+The administrator **SmartHome** sidebar panel for timers and scheduled actions
+is opt in. Enable **Show in sidebar** in the integration's **Configure** options.
+The **Voice timers** sensor introduced in 1.5.0 requires compatible
 SmartHome Core; update Core before or with an upgrade from an older version.
 No beta selection is required in HACS. The software verification does not establish
 physical satellite performance; the delivery limits below still apply.
@@ -86,9 +87,11 @@ on the separate SmartHome host; the HA integration does not install them.
 
 ### SmartHome panel
 
+In **Settings → Devices & services → SmartHome Assistant → Configure**, enable
+**Show in sidebar**. The default is off, including when upgrading from 1.6.0.
 Open **SmartHome** in Home Assistant's sidebar as an administrator to see active
 assistant timers and scheduled actions, with countdowns, due times and retained
-outcomes. The integration registers the panel automatically; no dashboard YAML,
+outcomes. The integration registers the panel when enabled; no dashboard YAML,
 frontend resource installation or separate web service is needed. It uses HA's
 built-in frontend and custom-panel support with locally bundled JavaScript.
 
@@ -103,7 +106,9 @@ records show the handoff and its limits, rather than a confirmed ringing state o
 an unsupported dismiss button. Enhanced outputs can expose an acknowledged
 sounding state and its supported dismissal operation.
 
-The panel shares the existing job API's administrator restriction and stays
+Turning **Show in sidebar** off removes the panel without changing jobs or timer
+delivery. The preference is retained when other integration settings change.
+The enabled panel shares the existing job API's administrator restriction and stays
 available when Core is offline or the conversation entry is unloaded. Reloading
 the agent does not cancel jobs. Scheduled device actions still require Core when
 due. The overview covers assistant-owned jobs, not native HA timer helpers.
