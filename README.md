@@ -6,7 +6,8 @@ requests and validates home actions. Core is installed separately.
 
 ## Install and update
 
-The current stable release is **1.4.0**, using the included HA-owned job backend.
+The current stable release is **1.5.0**, using the included HA-owned job backend.
+1.5.0 adds the **Voice timers** sensor; update SmartHome Core before or with it.
 No beta selection is required in HACS. The software verification does not establish
 physical satellite performance; the delivery limits below still apply.
 
@@ -80,6 +81,24 @@ The connector reads Core's existing pairing hash from a read-only mount. Pairing
 rotation/revocation applies to speech too. Core does not relay speech; stopping Core
 does not stop the connector or engines, including timer-name synthesis. Models stay
 on the separate SmartHome host; the HA integration does not install them.
+
+### Voice timers sensor
+
+The integration adds one sensor, **Voice timers**, whose state is the number of
+active SmartHome timers (pending, due or sounding). It carries no timer names or
+details, so nothing personal enters HA history. Its purpose is retrieval:
+SmartHome Core hides it from the language model and, when a request semantically
+matches it, offers Core's timer feature instead. This lets mis-heard requests such
+as "What times do I have?" still reach timers.
+
+When HA first creates the sensor, the integration sets the aliases "timers" and
+"countdown timers" and exposes it to Assist, because SmartHome only indexes exposed
+entities. It does this once: later changes you make to its aliases or exposure are
+kept. If you unexpose it, timers still work, but only requests containing timer
+words (timer, countdown, seconds, minutes, hours, duration) reach them. Core
+matches the sensor by integration and registry unique ID, so renaming its entity ID
+is safe. Core versions before this feature show it to the model as an ordinary
+read-only sensor.
 
 ### Pairing and connection security
 

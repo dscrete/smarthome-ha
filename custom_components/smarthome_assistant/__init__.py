@@ -12,7 +12,7 @@ from .api import CoreClient, CoreError
 from .const import (
     CONF_AUTH_METHOD, CONF_CORE_URL, CONF_SPEECH_ENABLED,
     CONF_TOKEN, CONF_TIMER_OUTPUTS, CONVERSATION_PLATFORM, DATA_SPEECH_CLIENT,
-    DOMAIN, PLATFORMS, SPEECH_PLATFORMS,
+    DOMAIN, PLATFORMS, SENSOR_PLATFORM, SPEECH_PLATFORMS,
 )
 from .jobs_setup import async_setup_jobs, async_configure_outputs
 from .speech import SpeechClient, speech_base_url_for_entry
@@ -39,7 +39,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         domain_data.setdefault(DATA_SPEECH_CLIENT, {})[entry.entry_id] = SpeechClient(
             session, speech_base_url_for_entry(entry), entry.data[CONF_TOKEN],
         )
-    await hass.config_entries.async_forward_entry_setups(entry, [Platform(CONVERSATION_PLATFORM)])
+    await hass.config_entries.async_forward_entry_setups(
+        entry, [Platform(CONVERSATION_PLATFORM), Platform(SENSOR_PLATFORM)],
+    )
     if speech_enabled:
         try:
             await hass.config_entries.async_forward_entry_setups(

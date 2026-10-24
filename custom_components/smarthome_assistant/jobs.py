@@ -23,6 +23,7 @@ NATIVE_PROTOCOL = "assist_native"
 # The HA Store envelope remains compatible; the versioned job document migrates
 # below. No existing job changes delivery owner during an upgrade.
 STORAGE_VERSION = 1
+ACTIVE_TIMER_STATUSES = frozenset({"pending", "due", "sounding"})
 ACTION_GRACE = timedelta(seconds=30)
 CLAIM_TIMEOUT = timedelta(seconds=60)
 TIMER_GRACE = timedelta(minutes=5)
@@ -114,6 +115,8 @@ class JobsManager:
         self.timer_output = timer_output
         self.clear_notice = clear_notice or (lambda job: None)
         self.on_change = lambda: None
+        # Independent observers (entities); on_change belongs to timer delivery.
+        self._change_listeners: list[Callable[[], None]] = []
         self.authority_id = str(uuid.uuid4())
         self._sequence_base = 0
         self._sequence_counter = 0
@@ -151,6 +154,22 @@ class JobsManager:
             raise
         self._committed = document
         self.on_change()
+        for listener in list(self._change_listeners):
+            listener()
+
+    def add_change_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call ``listener`` after each saved change; returns an unsubscribe callable."""
+        self._change_listeners.append(listener)
+
+        def remove() -> None:
+            if listener in self._change_listeners:
+                self._change_listeners.remove(listener)
+
+        return remove
+
+    def active_timer_count(self) -> int:
+        return sum(1 for job in self.jobs.values()
+                   if job["kind"] == "timer" and job["status"] in ACTIVE_TIMER_STATUSES)
 
     def delivery_sequence(self) -> int:
         self._sequence_counter += 1
