@@ -1,7 +1,11 @@
 """Home Assistant persistence and event scheduling for SmartHome jobs."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from homeassistant.components import persistent_notification
+from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import callback
@@ -19,6 +23,25 @@ async def async_setup_jobs(hass):
         if not getattr(hass.data[DOMAIN], "_unified_integration", False):
             raise RuntimeError("Remove the legacy smarthome_jobs YAML configuration and restart HA; stored jobs are preserved")
         return True
+
+    frontend = hass.data.setdefault(f"{DOMAIN}_frontend", {})
+    if not frontend.get("static_registered"):
+        frontend_path = Path(__file__).parent / "www" / "smarthome-jobs.js"
+        await hass.http.async_register_static_paths([
+            StaticPathConfig("/smarthome_assistant/smarthome-jobs.js", str(frontend_path), False)
+        ])
+        frontend["static_registered"] = True
+    if not frontend.get("panel_registered"):
+        await async_register_panel(
+            hass,
+            frontend_url_path="smarthome",
+            webcomponent_name="smarthome-jobs-panel",
+            sidebar_title="SmartHome",
+            sidebar_icon="mdi:calendar-clock",
+            module_url="/smarthome_assistant/smarthome-jobs.js",
+            require_admin=True,
+        )
+        frontend["panel_registered"] = True
 
     def notify(job, reason):
         labels = {

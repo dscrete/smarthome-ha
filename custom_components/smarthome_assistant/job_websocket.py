@@ -71,6 +71,26 @@ async def list_jobs(hass, connection, msg):
     connection.send_result(msg["id"], {"jobs": jobs})
 
 
+@websocket_api.websocket_command({**_BASE, vol.Required("type"): f"{DOMAIN}/subscribe"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def subscribe(hass, connection, msg):
+    """Subscribe to saved job changes; clients refresh through the list command."""
+    manager = _manager(hass)
+
+    def notify_change():
+        try:
+            connection.send_event(msg["id"], {})
+        except Exception:
+            # A closing socket must not turn an already persisted job change
+            # into an apparent mutation failure.
+            return
+
+    unsubscribe = manager.add_change_listener(notify_change)
+    connection.subscriptions[msg["id"]] = unsubscribe
+    connection.send_result(msg["id"], {})
+
+
 @websocket_api.websocket_command({**_BASE, vol.Required("source_satellite"): str,
                                   vol.Required("type"): f"{DOMAIN}/timer_output"})
 @websocket_api.require_admin
@@ -156,6 +176,6 @@ async def ack_notice(hass, connection, msg):
 
 def async_register_websocket_commands(hass):
     """Register commands on Home Assistant's already authenticated WS API."""
-    for command in (create, update, cancel, list_jobs, check_exposure, timer_output,
+    for command in (create, update, cancel, list_jobs, subscribe, check_exposure, timer_output,
                     claim, complete, timer_dismiss, timer_delivered, ack_notice):
         websocket_api.async_register_command(hass, command)

@@ -40,7 +40,10 @@ The integration does not install a model or change other pipelines.
    is removed; saved legacy values are ignored.
 
 The `smarthome_jobs` backend is included in this integration for timers and
-schedules. Its API and `.storage/smarthome_jobs.storage` remain compatible.
+schedules. The integration also installs an administrator-only **SmartHome**
+sidebar panel for active job countdowns, scheduled actions and retained job
+history. It uses HA's authenticated job WebSocket API and is available even when
+the conversation entry is unloaded. Its API and `.storage/smarthome_jobs.storage` remain compatible.
 New timers use HA-owned native ESPHome
 delivery, and remain independent of Core/Gateway after acceptance. Existing timers
 retain their stored owner. Finish/cancel active Gateway-owned timers on the old

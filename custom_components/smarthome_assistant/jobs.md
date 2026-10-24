@@ -25,6 +25,21 @@ takes `outcome`, which is `succeeded|failed|unknown|missed` for scheduled action
 and `undelivered` for timers. List filters are optional `statuses`, `kinds`, and
 exact `source_satellite`; all supplied filters apply together.
 
+The integration installs an administrator-only SmartHome sidebar panel on first
+jobs setup. It shows active countdowns, scheduled action summaries and retained
+history. The panel subscribes with `smarthome_jobs/subscribe`; HA sends an empty
+invalidation event after each durable saved change, and the panel refreshes via
+`list`. HA removes the listener with the WebSocket connection subscription.
+Cancel and dismissal use the existing request ID and expected revision contract.
+Only pending/due jobs can be cancelled, and only timers in the backend's
+`sounding` state expose dismissal. A standard ESPHome completed `handed_off`
+timer is history only: HA cannot confirm that its alert is sounding or receive a
+local dismissal, so the panel states that delivery limit and offers no dismissal.
+
+Reminders and alarms are not implemented. The panel groups job kinds dynamically
+and displays unrecognized future kinds with a generic heading, but this does not
+provide reminder or alarm creation or scheduling.
+
 Due jobs emit `smarthome_jobs_due` with `{job_id,kind,revision,due_at,status}`.
 Every mutation uses a client request ID so retrying after a lost response returns
 the original result. Expected revisions reject stale writes. Scheduled-action
