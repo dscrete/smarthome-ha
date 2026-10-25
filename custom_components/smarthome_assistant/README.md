@@ -27,9 +27,11 @@ The integration does not install a model or change other pipelines.
    selecting **SmartHome Assistant** for conversation, STT and TTS, then choose a
    TTS voice. Existing HA engines can still be selected instead. See the full
    [speech setup](https://github.com/dscrete/smarthome-ha#configure).
-   **Disable “Prefer handling
-   commands locally”**. Otherwise native HA intents, including timers, can bypass
-   Core's backend, validation and confirmation.
+   **Required: turn Prefer handling commands locally off in this pipeline.**
+   Otherwise HA can create native timers that bypass SmartHome's backend,
+   validation and confirmation and do not appear in its jobs panel. SmartHome's
+   own deterministic fast paths still handle simple supported commands without
+   an LLM call. Existing native HA timers remain separate.
 5. Assign only the intended test satellite to that pipeline. In EchoMuse,
    choose its **Home Assistant voice backend** when using this pipeline.
    Physical EchoMuse playback remains unverified until an isolated hardware test.
