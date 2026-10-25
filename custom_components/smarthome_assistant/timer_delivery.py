@@ -75,7 +75,7 @@ class TimerDelivery:
             expected_mac = self.target_mac(output) if self.target_mac else None
             if self.target_mac and not expected_mac:
                 raise JobError("invalid_output", "The satellite has no unique registered native MAC identity")
-            jobs = await self.manager.async_list(kinds=["timer"], statuses=["pending", "due", "sounding"])
+            jobs = await self.manager.async_list(kinds=["timer", "alarm"], statuses=["pending", "due", "sounding"])
             jobs = [job for job in jobs if job.get("delivery", {}).get("owner") == "ha"
                     and job["delivery"].get("protocol") != NATIVE_PROTOCOL
                     and job["delivery"].get("output") == output]
@@ -94,7 +94,7 @@ class TimerDelivery:
             await asyncio.gather(*(prepare_audio(job) for job in jobs))
             # Names may need fresh TTS. Reload after that await so cancellation,
             # edits and terminal state are not projected from an old snapshot.
-            all_jobs = await self.manager.async_list(kinds=["timer"], statuses=["pending", "due", "sounding"])
+            all_jobs = await self.manager.async_list(kinds=["timer", "alarm"], statuses=["pending", "due", "sounding"])
             jobs = [job for job in all_jobs if job.get("delivery", {}).get("owner") == "ha"
                     and job["delivery"].get("protocol") != NATIVE_PROTOCOL
                     and job["delivery"].get("output") == output]
@@ -105,7 +105,8 @@ class TimerDelivery:
                 projected.append({"job_id": job["id"], "delivery_token": job["delivery"]["token"],
                     "revision": job["revision"], "due_at": job["due_at"],
                     "cutoff_at": iso_utc(parse_utc(job["due_at"]) + TIMER_GRACE),
-                    "status": job["status"], "name": job.get("name"), "audio_url": audio_url})
+                    "status": job["status"], "name": job.get("name") or ("Alarm" if job["kind"] == "alarm" else None),
+                    "audio_url": audio_url})
             request = {"version": 1, "exchange_id": uuid4().hex,
                        "authority_id": self.manager.authority_id,
                        "sequence": self.manager.delivery_sequence(), "now": iso_utc(self.manager.now()),
@@ -142,7 +143,7 @@ class TimerDelivery:
             for key, result in zip(self.bindings, results):
                 if isinstance(result, Exception):
                     _LOGGER.debug("Native timer reconciliation unavailable for %s: %s", key, result)
-            jobs = await self.manager.async_list(kinds=["timer"], statuses=["pending", "due", "sounding"])
+            jobs = await self.manager.async_list(kinds=["timer", "alarm"], statuses=["pending", "due", "sounding"])
             outstanding = any(job.get("delivery", {}).get("owner") == "ha"
                               and job["delivery"].get("protocol") != NATIVE_PROTOCOL for job in jobs) or any(self._acks.values())
             try:
@@ -201,7 +202,8 @@ def configure_exchange_delivery(hass, manager, bindings):
         pipeline = assist_pipeline.async_get_pipeline(hass)
         if not pipeline.tts_engine:
             raise JobError("unavailable", "The preferred HA Assist pipeline has no TTS engine")
-        media_id = tts.generate_media_source_id(hass, f"{job['name']} timer finished.",
+        label = "alarm" if job["kind"] == "alarm" else "timer"
+        media_id = tts.generate_media_source_id(hass, f"{job.get('name') or 'Your'} {label} finished.",
             engine=pipeline.tts_engine, language=pipeline.tts_language, cache=True)
         media = await media_source.async_resolve_media(hass, media_id, target_media_player=None)
         return async_process_play_media_url(hass, media.url)
@@ -228,6 +230,50 @@ class CombinedTimerDelivery:
             raise JobError("unavailable", "The configured enhanced timer output is unavailable")
         return output
 
+    async def alert_output(self, source, kind):
+        """Resolve an alert output by exact source, or configured default upstream."""
+        item = self.standard.output.resolve_alert_output(source, kind, outputs=self.describe_outputs())
+        key = item["entity_id"]
+        if key in self.bindings:
+            if not item["supports_announce"]:
+                raise JobError("unsupported_output", "The mapped Assist satellite cannot announce")
+            item["supports_timer"] = True
+            item.update(output=key, delivery_protocol="exchange_v1", delivery_owner="ha")
+            if self.exchange.target_mac:
+                mac = self.exchange.target_mac(key)
+                if not mac:
+                    raise JobError("invalid_output", "The mapped alert output has no unique controller identity")
+                item["mac_address"] = mac
+            return item
+        item.update(output=item["entity_id"], delivery_protocol="assist_native", delivery_owner="ha")
+        item["device_id"] = item.get("device_id")
+        return item
+
+    def describe_outputs(self):
+        """Return registry-backed output choices and their supported alert modes."""
+        outputs = self.standard.output.describe_outputs()
+        enhanced = set(self.bindings)
+        for item in outputs:
+            if item["entity_id"] in enhanced and item["supports_announce"]:
+                item["supports_timer"] = True
+                item["delivery_protocol"] = "exchange_v1"
+            else:
+                item["delivery_protocol"] = "assist_native"
+        return outputs
+
+    def stop_alert(self, job):
+        """Request cancellation of an alarm already handed to its output."""
+        delivery = job.get("delivery", {})
+        if delivery.get("protocol") == NATIVE_PROTOCOL:
+            output = delivery.get("output")
+            self.standard.output.send(output, "cancelled", job)
+            return True
+        # Enhanced exchanges are complete projections. Waking the worker removes
+        # terminal jobs from the next snapshot, but the protocol cannot confirm
+        # that an already handed-off tone stopped.
+        self.exchange.wake()
+        return False
+
     def wake(self):
         self.exchange.wake()
         self.standard.wake()
@@ -249,5 +295,8 @@ def configure_delivery(hass, manager, bindings):
     standard = StandardTimerDelivery(manager, HAStandardTimerOutput(hass))
     delivery = CombinedTimerDelivery(exchange, standard)
     manager.timer_output = delivery.available
+    manager.alert_output = delivery.alert_output
+    manager.output_catalog = delivery.describe_outputs
+    manager.alert_stop = delivery.stop_alert
     manager.on_change = delivery.wake
     return delivery

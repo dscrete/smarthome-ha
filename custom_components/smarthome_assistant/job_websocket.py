@@ -20,7 +20,10 @@ def _manager(hass):
 def _respond(connection, command_id, awaitable):
     async def send():
         try:
-            connection.send_result(command_id, {"job": await awaitable})
+            result = await awaitable
+            connection.send_result(command_id, result if isinstance(result, dict)
+                                   and ("job" in result or "schedule" in result)
+                                   else {"job": result})
         except JobError as exc:
             connection.send_error(command_id, exc.code, str(exc))
         except Exception:
@@ -33,7 +36,15 @@ def _respond(connection, command_id, awaitable):
 @websocket_api.require_admin
 @websocket_api.async_response
 async def create(hass, connection, msg):
-    await _respond(connection, msg["id"], _manager(hass).async_create(msg["request_id"], msg["job"]))
+    async def send():
+        try:
+            result = await _manager(hass).async_create(msg["request_id"], msg["job"])
+            connection.send_result(msg["id"], result if "schedule" in result else {"job": result})
+        except JobError as exc:
+            connection.send_error(msg["id"], exc.code, str(exc))
+        except Exception:
+            connection.send_error(msg["id"], "unknown_error", "Job command failed")
+    await send()
 
 
 @websocket_api.websocket_command({**_BASE, **_REQUEST, **_JOB_REV,
@@ -60,6 +71,7 @@ async def cancel(hass, connection, msg):
                                   vol.Optional("kinds"): [str],
                                   vol.Optional("source_satellite"): str,
                                   vol.Optional("for_reconcile"): bool,
+                                  vol.Optional("include_schedules"): bool,
                                   vol.Required("type"): f"{DOMAIN}/list"})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -68,7 +80,10 @@ async def list_jobs(hass, connection, msg):
         statuses=msg.get("statuses"), kinds=msg.get("kinds"),
         source_satellite=msg.get("source_satellite"),
         for_reconcile=msg.get("for_reconcile", False))
-    connection.send_result(msg["id"], {"jobs": jobs})
+    result = {"jobs": jobs}
+    if msg.get("include_schedules"):
+        result["schedules"] = await _manager(hass).async_list_schedules(kinds=msg.get("kinds"))
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command({**_BASE, vol.Required("type"): f"{DOMAIN}/subscribe"})
@@ -156,6 +171,81 @@ async def timer_dismiss(hass, connection, msg):
         msg["request_id"], msg["job_id"], msg["expected_revision"]))
 
 
+@websocket_api.websocket_command({**_BASE,
+                                  vol.Optional("source_satellite"): str,
+                                  vol.Optional("context_source"): str,
+                                  vol.Required("type"): f"{DOMAIN}/timer_cancel_preview"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def timer_cancel_preview(hass, connection, msg):
+    try:
+        result = await _manager(hass).async_timer_cancel_preview(
+            source_satellite=msg.get("source_satellite"), context_source=msg.get("context_source"))
+    except JobError as exc:
+        connection.send_error(msg["id"], exc.code, str(exc))
+    else:
+        connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({**_BASE, **_REQUEST,
+                                  vol.Required("selection"): dict,
+                                  vol.Required("type"): f"{DOMAIN}/timer_cancel_batch"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def timer_cancel_batch(hass, connection, msg):
+    try:
+        result = await _manager(hass).async_timer_cancel_batch(msg["request_id"], msg["selection"])
+    except JobError as exc:
+        connection.send_error(msg["id"], exc.code, str(exc))
+    else:
+        connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({**_BASE, **_REQUEST,
+                                  vol.Optional("job_id"): str,
+                                  vol.Optional("schedule_id"): str,
+                                  vol.Required("expected_revision"): int,
+                                  vol.Required("operation"): str,
+                                  vol.Optional("arguments"): dict,
+                                  vol.Required("type"): f"{DOMAIN}/operate"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def operate(hass, connection, msg):
+    manager = _manager(hass)
+    if bool(msg.get("job_id")) == bool(msg.get("schedule_id")):
+        connection.send_error(msg["id"], "invalid_format", "provide exactly one of job_id or schedule_id")
+        return
+    await _respond(connection, msg["id"], manager.async_operate(
+        msg["request_id"], schedule_id=msg.get("schedule_id"), job_id=msg.get("job_id"),
+        expected_revision=msg["expected_revision"], operation=msg["operation"],
+        arguments=msg.get("arguments")))
+
+
+@websocket_api.websocket_command({**_BASE, vol.Required("type"): f"{DOMAIN}/outputs"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def outputs(hass, connection, msg):
+    try:
+        result = await _manager(hass).async_alert_outputs()
+    except JobError as exc:
+        connection.send_error(msg["id"], exc.code, str(exc))
+    else:
+        connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({**_BASE, vol.Required("selection"): dict,
+                                  vol.Required("type"): f"{DOMAIN}/resolve"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def resolve(hass, connection, msg):
+    try:
+        connection.send_result(msg["id"], await _manager(hass).async_resolve(msg["selection"]))
+    except JobError as exc:
+        connection.send_error(msg["id"], exc.code, str(exc))
+    except Exception:
+        connection.send_error(msg["id"], "unknown_error", "Job command failed")
+
+
 @websocket_api.websocket_command({**_BASE, **_REQUEST, **_JOB_REV,
                                   vol.Required("type"): f"{DOMAIN}/timer_delivered"})
 @websocket_api.require_admin
@@ -177,5 +267,7 @@ async def ack_notice(hass, connection, msg):
 def async_register_websocket_commands(hass):
     """Register commands on Home Assistant's already authenticated WS API."""
     for command in (create, update, cancel, list_jobs, subscribe, check_exposure, timer_output,
-                    claim, complete, timer_dismiss, timer_delivered, ack_notice):
+                    claim, complete, timer_dismiss, timer_cancel_preview, timer_cancel_batch,
+                    operate, timer_delivered, ack_notice,
+                    outputs, resolve):
         websocket_api.async_register_command(hass, command)

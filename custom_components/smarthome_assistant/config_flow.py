@@ -24,10 +24,14 @@ from .const import (
     CONF_SPEECH_ENABLED,
     CONF_SPEECH_URL,
     CONF_SHOW_IN_SIDEBAR,
+    CONF_DEFAULT_ALERT_OUTPUT,
+    CONF_SNOOZE_SECONDS,
+    DEFAULT_SNOOZE_SECONDS,
     CONF_TIMER_OUTPUTS,
     CONF_TOKEN,
     DOMAIN,
     validate_timer_outputs,
+    alert_options,
 )
 from .pairing import DATA_PAIRING, PairingError, pairing_requests
 from .speech import speech_base_url
@@ -191,7 +195,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if pending["reconfigure"]:
                         result = self.async_update_reload_and_abort(
                             self._get_reconfigure_entry(), data_updates=data,
-                            options={CONF_PROFILE_ID: profile_id,
+                            options={**self._get_reconfigure_entry().options,
+                                     CONF_PROFILE_ID: profile_id,
                                      CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
                                      CONF_SPEECH_ENABLED: pending[CONF_SPEECH_ENABLED],
                                      CONF_SPEECH_URL: pending[CONF_SPEECH_URL],
@@ -392,6 +397,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_SPEECH_URL: pending[CONF_SPEECH_URL],
                     },
                     options={
+                        **entry.options,
                         CONF_PROFILE_ID: profile_id,
                         CONF_TIMER_OUTPUTS: pending[CONF_TIMER_OUTPUTS],
                         CONF_SPEECH_ENABLED: pending[CONF_SPEECH_ENABLED],
@@ -472,10 +478,15 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 except ValueError:
                     return self.async_show_form(step_id="init", data_schema=self._options_schema(),
                                                 errors={"base": "invalid_speech_settings"})
+                try:
+                    alerts = alert_options({**self.config_entry.options, **user_input})
+                except ValueError:
+                    return self.async_show_form(step_id="init", data_schema=self._options_schema(),
+                                                errors={"base": "invalid_alert_settings"})
                 return self.async_create_entry(
                     title="",
                     data={CONF_PROFILE_ID: profile_id, CONF_TIMER_OUTPUTS: timer_outputs,
-                          CONF_SHOW_IN_SIDEBAR: show_in_sidebar, **speech_settings},
+                          CONF_SHOW_IN_SIDEBAR: show_in_sidebar, **speech_settings, **alerts},
                 )
 
         return self.async_show_form(step_id="init", data_schema=self._options_schema(), errors=errors)
@@ -508,4 +519,12 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             probatio.Optional(CONF_SHOW_IN_SIDEBAR, default=self.config_entry.options.get(
                 CONF_SHOW_IN_SIDEBAR, False,
             )): selector.BooleanSelector(),
+            probatio.Optional(CONF_DEFAULT_ALERT_OUTPUT, default=self.config_entry.options.get(
+                CONF_DEFAULT_ALERT_OUTPUT, "",
+            )): selector.TextSelector(),
+            probatio.Optional(CONF_SNOOZE_SECONDS, default=self.config_entry.options.get(
+                CONF_SNOOZE_SECONDS, DEFAULT_SNOOZE_SECONDS,
+            )): selector.NumberSelector(selector.NumberSelectorConfig(
+                min=1, max=86400, step=1, mode=selector.NumberSelectorMode.BOX,
+            )),
         })

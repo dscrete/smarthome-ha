@@ -47,6 +47,15 @@ scheduled actions and retained history through HA's authenticated job WebSocket
 API. Once enabled, it stays available when the conversation entry is unloaded.
 Hiding it does not change jobs or delivery. The job API and
 `.storage/smarthome_jobs.storage` remain compatible.
+Version 1.7.0 supplies full timer controls, recurring alarms
+and spoken reminders. HA owns their schedules, occurrence outcomes, snooze and
+delivery; the panel can create and edit them while Core is offline. Configure an
+optional default alert satellite and default snooze duration in HA. Explicit
+outputs and the requesting satellite take precedence. Reminders require HA TTS
+and announcement support; alarms require native timer presentation. Standard
+ESPHome handoff and stop requests do not confirm playback or silence. See
+[the job API](jobs.md) and the repository's scheduling guide for supported
+recurrence, overdue recovery and protocol guarantees.
 New timers use HA-owned native ESPHome
 delivery, and remain independent of Core/Gateway after acceptance. Existing timers
 retain their stored owner. Finish/cancel active Gateway-owned timers on the old
@@ -55,10 +64,11 @@ EchoMuse controllers work with standard delivery; the fork and explicit mapping
 are needed only for enhanced acknowledgement/recovery. Unsupported outputs fail
 before persistence. See [standard delivery limits](https://github.com/dscrete/smarthome-ha#standard-timer-recovery-limits).
 
-## Current merge scope
+## Capabilities and software verification
 
 The target is exposed-device control and state queries, named timer lifecycle,
-low-risk one-shot schedules with edit/cancel, current/forecast weather and advice,
+recurring alarms and spoken reminders, low-risk one-shot device schedules with
+edit/cancel, current/forecast weather and advice,
 typed HA scripts with confirmation, clarification and bounded conversation across
 wakes. The software baseline passes both repetitions of the eight recorded
 conversations: 52/52 turns on 20b low. This earlier language result does not
@@ -66,7 +76,7 @@ establish reliability for every
 phrasing or physical satellite playback. Missing dependencies or unsupported
 outputs report unavailability before creating a job.
 
-**The development PR is ready for review, not merged.** The portable software checks prove
+The portable software checks prove
 expiry, repeated synthetic tone and button dismissal with Core/Gateway stopped,
 including HA restart, pre-handoff reconnect and the connected five-minute cutoff.
 Standard ESPHome output cannot acknowledge local dismissal or guarantee recovery
@@ -80,7 +90,7 @@ existing safety policy, even after confirmation. Existing jobs remain inspectabl
 and cancellable. Immediate sensitive actions and scripts retain exact confirmation.
 Routine low-risk actions do not gain a blanket confirmation requirement.
 
-Music expansion, reminders/recurring alarms, complex event automations, general
+Music expansion, complex event automations, general
 undo and long-term memory are deferred. Existing unrelated features are not
 removed. The HA agent uses native tools with 20b low; the strict-response experiment
 is discontinued.

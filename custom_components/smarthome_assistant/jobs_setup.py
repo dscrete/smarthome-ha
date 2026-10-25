@@ -17,6 +17,7 @@ from homeassistant.helpers.event import async_track_point_in_utc_time
 from .jobs import DOMAIN, JobsManager, STORAGE_VERSION
 from .timer_delivery import configure_delivery
 from .job_websocket import async_register_websocket_commands
+from .reminder_delivery import ReminderDelivery
 
 async def async_setup_jobs(hass):
     """Load persistent jobs and register authenticated WebSocket commands."""
@@ -32,6 +33,9 @@ async def async_setup_jobs(hass):
             "failed": "A scheduled action failed.",
             "undelivered": "A timer expired without being delivered to its satellite.",
             "native_unknown": "A timer alert may have reached its satellite, but delivery or dismissal could not be confirmed. It will not be replayed.",
+            "alarm_missed": "An alarm was missed because it could not be delivered within five minutes.",
+            "alarm_unknown": "An alarm may have reached its satellite, but delivery or dismissal could not be confirmed. It will not be replayed.",
+            "reminder_unknown": "A reminder announcement may have reached its satellite, but delivery could not be confirmed. It will not be replayed.",
         }
         name = f"Timer {job['name']} expired without delivery." if reason == "undelivered" and job.get("name") else labels[reason]
         persistent_notification.async_create(
@@ -57,9 +61,10 @@ async def async_setup_jobs(hass):
     hass.data[DOMAIN] = manager
     delivery = configure_delivery(hass, manager, {})
     manager.delivery_worker = delivery
+    manager.reminder_worker = ReminderDelivery(manager, delivery.standard.output)
     async_register_websocket_commands(hass)
     legacy_timers = [job["id"] for job in manager.jobs.values()
-        if job["kind"] == "timer" and job["status"] in {"pending", "due", "sounding"}
+        if job["kind"] == "timer" and job["status"] in {"pending", "paused", "due", "sounding"}
         and job.get("delivery", {}).get("owner") != "ha"]
     if legacy_timers:
         persistent_notification.async_create(hass,
@@ -72,14 +77,17 @@ async def async_setup_jobs(hass):
     @callback
     def start_delivery(_event):
         manager.delivery_worker.start()
+        manager.reminder_worker.start()
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, start_delivery)
     if getattr(hass, "is_running", False):
         manager.delivery_worker.start()
+        manager.reminder_worker.start()
 
     @callback
     def stop_delivery(_event):
         hass.async_create_task(manager.delivery_worker.stop())
+        hass.async_create_task(manager.reminder_worker.stop())
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop_delivery)
     return True

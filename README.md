@@ -6,7 +6,11 @@ requests and validates home actions. Core is installed separately.
 
 ## Install and update
 
-The current stable release is **1.6.1**, using the included HA-owned job backend.
+Alarm/reminder management, expanded timer controls, HA-owned bulk cancellation and
+explicit stop certainty require **1.7.0 or newer** and matching SmartHome Core.
+The 1.6.1 release does not include these features. Check the
+[published releases](https://github.com/dscrete/smarthome-ha/releases) before
+updating: a version in a source manifest does not establish release availability.
 The administrator **SmartHome** sidebar panel for timers and scheduled actions
 is opt in. Enable **Show in sidebar** in the integration's **Configure** options.
 The **Voice timers** sensor introduced in 1.5.0 requires compatible
@@ -68,6 +72,22 @@ jobs in HA's separate persistent storage.
 6. Configure a TTS voice in HA's preferred Assist pipeline for timer names.
    Missing or disconnected outputs reject a new timer before persistence.
 
+In **Configure**, optionally set **Default alert satellite** for requests without a
+source satellite, and **Default snooze duration (seconds)** (540 by default).
+Explicit output selection and the requesting satellite take precedence. Saved
+alerts retain their output identity; changing the default does not reroute them.
+
+The SmartHome panel supports timer creation, pause/resume, time adjustment, rename
+and restart, plus alarm/reminder creation, recurrence and editing. Alarm snooze or
+dismiss affects one occurrence; enable/disable and cancellation affect the saved
+schedule. These controls and accepted alert delivery work with Core stopped.
+Daily, weekly, monthly and interval schedules use HA's saved timezone and recovery
+rules. Future alarms/reminders may target a temporarily disconnected registered
+output; new timers still require a connected output. Reminder speech requires an
+announcement-capable satellite and a configured HA TTS provider. No model is called
+when the reminder becomes due. Standard alarm stop/snooze requests cannot confirm
+silence; the panel distinguishes them from acknowledged enhanced delivery.
+
 Core's own HA token needs administrator access for catalog metadata and job
 commands. Configure that token in Core; it is separate from this integration's
 bearer credential. Keep credentials out of repository files and URLs.
@@ -112,20 +132,22 @@ The enabled panel shares the existing job API's administrator restriction and st
 available when Core is offline or the conversation entry is unloaded. Reloading
 the agent does not cancel jobs. Scheduled device actions still require Core when
 due. The overview covers assistant-owned jobs, not native HA timer helpers.
-Reminders and alarms remain future backend features; additional job types can
-appear in this overview when supported. See [the job API](custom_components/smarthome_assistant/jobs.md).
+Alarm/reminder definitions and their individual occurrences appear separately,
+so dismissing an occurrence leaves its recurring definition intact. See
+[the job API](custom_components/smarthome_assistant/jobs.md).
 
 ### Voice timers sensor
 
-The integration adds one sensor, **Voice timers**, whose state is the number of
-active SmartHome timers (pending, due or sounding). It carries no timer names or
-details, so nothing personal enters HA history. Its purpose is retrieval:
-SmartHome Core hides it from the language model and, when a request semantically
-matches it, offers Core's timer feature instead. This lets mis-heard requests such
+The integration adds count-only **Voice timers**, **Alarms** and **Reminders**
+sensors. Voice timers counts pending, paused, due or sounding timers; the other
+sensors count enabled definitions. They carry no timer names or saved messages,
+so nothing personal enters HA history. Their purpose is retrieval:
+SmartHome Core hides these sensors from the language model and, when a request semantically
+matches one, offers the corresponding assistant capability instead. This lets mis-heard requests such
 as "What times do I have?" still reach timers.
 
-When HA first creates the sensor, the integration sets the aliases "timers" and
-"countdown timers" and exposes it to Assist, because SmartHome only indexes exposed
+When HA first creates each sensor, the integration sets generic aliases such as
+"timers" and "countdown timers" and exposes it to Assist, because SmartHome only indexes exposed
 entities. It does this once: later changes you make to its aliases or exposure are
 kept. If you unexpose it, timers still work, but only requests containing timer
 words (timer, countdown, seconds, minutes, hours, duration) reach them. Core
@@ -178,8 +200,8 @@ actions or changes to another conversation engine.
 - Scheduled device actions still require Core at dispatch. Missed actions are
   skipped; uncertain actions are never automatically replayed.
 - Timer delivery is software-tested with synthetic Dots. Physical audio, acoustic
-  wake recognition and display remain unverified. Music expansion, reminders and
-  recurring alarms are outside this release.
+  wake recognition and display remain unverified. Music expansion is outside
+  this release.
 
 ### Standard timer recovery limits
 
@@ -205,7 +227,8 @@ The standard adapter uses HA's existing ESPHome connection and checks timer
 capability and exact HA device identity. HA 2026.10 has no public dispatcher for
 externally owned timers, so one isolated adapter reads its registered internal
 timer handler. It checks the API shape and fails closed when incompatible; HA
-upgrades need compatibility verification. Alarms/reminders remain future features.
+upgrades need compatibility verification. Alarms reuse this presentation path;
+spoken reminders instead require HA announcement support and a configured TTS pipeline.
 
 ## Migration from two installed folders
 
@@ -227,10 +250,11 @@ delivery tokens and API are preserved. Finish or cancel active timers before
 changing their output binding. Conversation entry reloads leave delivery running;
 disabling/removing the whole integration can stop it after HA restarts.
 
-The portable-timer update migrates the job document to version 3, preserving
-existing delivery ownership. Back up HA before updating. Version 1.2 cannot read
-that document; a deliberate downgrade needs the corresponding backup, rather
-than removing the store or changing active timers' owners.
+The expanded scheduling update migrates the job document to version 4, preserving
+existing jobs, delivery ownership, protocol bindings and request receipts, and
+adding recurring definitions. Back up HA before updating. Earlier releases cannot
+read this document; a deliberate downgrade needs the corresponding backup,
+rather than removing the store or changing active timers' owners.
 
 This repository is exported from the private development project without its Git
 history, credentials, household configuration or test data. See the included

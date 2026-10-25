@@ -12,18 +12,19 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 DOMAIN = "smarthome_jobs"
 EVENT_JOB_DUE = "smarthome_jobs_due"
-STORE_VERSION = 3
+STORE_VERSION = 4
 NATIVE_PROTOCOL = "assist_native"
 # The HA Store envelope remains compatible; the versioned job document migrates
 # below. No existing job changes delivery owner during an upgrade.
 STORAGE_VERSION = 1
-ACTIVE_TIMER_STATUSES = frozenset({"pending", "due", "sounding"})
+ACTIVE_TIMER_STATUSES = frozenset({"pending", "paused", "due", "sounding"})
 ACTION_GRACE = timedelta(seconds=30)
 CLAIM_TIMEOUT = timedelta(seconds=60)
 TIMER_GRACE = timedelta(minutes=5)
@@ -109,10 +110,17 @@ class JobsManager:
         self.hass, self.store, self.now = hass, store, now
         self.schedule_at, self.notify = schedule_at, notify
         self.jobs: dict[str, dict[str, Any]] = {}
+        self.schedules: dict[str, dict[str, Any]] = {}
         self.requests: dict[str, dict[str, Any]] = {}
         self._scheduled: dict[str, Callable[[], None]] = {}
         self._lock = asyncio.Lock()
+        self._loading = False
         self.timer_output = timer_output
+        self.alert_output = None
+        self.output_catalog = None
+        self.alert_stop = None
+        self.default_alert_output = ""
+        self.snooze_seconds = 540
         self.clear_notice = clear_notice or (lambda job: None)
         self.on_change = lambda: None
         # Independent observers (entities); on_change belongs to timer delivery.
@@ -120,17 +128,18 @@ class JobsManager:
         self.authority_id = str(uuid.uuid4())
         self._sequence_base = 0
         self._sequence_counter = 0
-        self._committed = {"jobs": {}, "requests": {}}
+        self._committed = {"jobs": {}, "schedules": {}, "requests": {}}
 
     async def async_load(self) -> None:
+        self._loading = True
         data = await self.store.async_load()
         if data:
-            if data.get("version") not in {1, 2, STORE_VERSION}:
+            if data.get("version") not in {1, 2, 3, STORE_VERSION}:
                 raise RuntimeError(f"Unsupported {DOMAIN} storage version")
-            self.jobs, self.requests = data.get("jobs", {}), data.get("requests", {})
+            self.jobs, self.schedules, self.requests = data.get("jobs", {}), data.get("schedules", {}), data.get("requests", {})
             self.authority_id = data.get("authority_id") or self.authority_id
             self._sequence_base = data.get("sequence_base", 0)
-        self._committed = copy.deepcopy({"jobs": self.jobs, "requests": self.requests})
+        self._committed = copy.deepcopy({"jobs": self.jobs, "schedules": self.schedules, "requests": self.requests})
         for job in self.jobs.values():
             if job["kind"] == "timer":
                 job.setdefault("delivery", {"owner": "core_gateway"})
@@ -138,21 +147,31 @@ class JobsManager:
         # Reserve an entire sequence range durably before any network delivery.
         await self._save()
         await self._reconcile_startup()
+        if self.schedules or any(job.get("kind") in {"alarm", "reminder"} for job in self.jobs.values()):
+            from .alert_schedules import reconcile_startup
+            await reconcile_startup(self)
         if self._prune():
             await self._save()
+        self._loading = False
+        for definition in self.schedules.values():
+            self._schedule_definition(definition)
 
     async def _save(self) -> None:
         self._prune()
-        document = copy.deepcopy({"version": STORE_VERSION, "jobs": self.jobs, "requests": self.requests,
+        document = copy.deepcopy({"version": STORE_VERSION, "jobs": self.jobs, "schedules": self.schedules, "requests": self.requests,
                                  "authority_id": self.authority_id, "sequence_base": self._sequence_base})
         try:
             await self.store.async_save(document)
         except BaseException:
             # The worker must never project a mutation that HA did not save.
             self.jobs = copy.deepcopy(self._committed["jobs"])
+            self.schedules = copy.deepcopy(self._committed["schedules"])
             self.requests = copy.deepcopy(self._committed["requests"])
             raise
         self._committed = document
+        if not self._loading:
+            for definition in self.schedules.values():
+                self._schedule_definition(definition)
         self.on_change()
         for listener in list(self._change_listeners):
             listener()
@@ -196,6 +215,11 @@ class JobsManager:
             if parse_utc(result["at"]) < now - REQUEST_RETENTION:
                 self.requests.pop(request_id)
                 changed = True
+        for schedule_id, schedule in list(self.schedules.items()):
+            if (not schedule.get("enabled") and schedule.get("finished_at")
+                    and parse_utc(schedule["finished_at"]) < now - JOB_RETENTION):
+                self.schedules.pop(schedule_id)
+                changed = True
         return changed
 
     def _job(self, job_id: str) -> dict[str, Any]:
@@ -232,6 +256,17 @@ class JobsManager:
         if cancel:
             cancel()
 
+    def _schedule_definition(self, definition):
+        """Regular occurrences advance even while an older alert is sounding."""
+        key = "schedule:" + definition["id"]
+        self._cancel_schedule(key)
+        if not definition.get("enabled") or not definition.get("next_due_at"):
+            return
+        from .alert_schedules import regular_due
+        self._scheduled[key] = self.schedule_at(
+            lambda _now, sid=definition["id"]: self.hass.async_create_task(regular_due(self, sid)),
+            max(parse_utc(definition["next_due_at"]), self.now()))
+
     def _schedule_job(self, job: dict[str, Any]) -> None:
         self._cancel_schedule(job["id"])
         due = parse_utc(job["due_at"])
@@ -251,11 +286,24 @@ class JobsManager:
             self._scheduled[job["id"]] = self.schedule_at(
                 lambda _now, jid=job["id"]: self.hass.async_create_task(self._timer_expired(jid)),
                 max(due + TIMER_GRACE + timedelta(seconds=1), self.now()))
+        elif job["kind"] in {"alarm", "reminder"} and job["status"] == "pending":
+            self._scheduled[job["id"]] = self.schedule_at(
+                lambda _now, jid=job["id"]: self.hass.async_create_task(self._alert_due(jid)), max(due, self.now()))
+        elif job["kind"] == "alarm" and job["status"] in {"due", "sounding"}:
+            self._scheduled[job["id"]] = self.schedule_at(
+                lambda _now, jid=job["id"]: self.hass.async_create_task(self._timer_expired(jid)),
+                max(due + TIMER_GRACE + timedelta(seconds=1), self.now()))
+
+    def _schedule_following_alert(self, job: dict[str, Any]) -> None:
+        schedule = self.schedules.get(job.get("schedule_id"))
+        following = self.jobs.get(schedule.get("current_job_id")) if schedule else None
+        if following and following["status"] == "pending":
+            self._schedule_job(following)
 
     async def _reconcile_startup(self) -> None:
         now = self.now().astimezone(timezone.utc)
         changed, due_events, notices = False, [], []
-        for job in self.jobs.values():
+        for job in list(self.jobs.values()):
             due, status = parse_utc(job["due_at"]), job["status"]
             if (job.get("delivery", {}).get("protocol") == NATIVE_PROTOCOL
                     and status == "due" and job["delivery"].get("finish_attempted_at")):
@@ -264,7 +312,10 @@ class JobsManager:
                 job.update(status="unknown", outcome="native_delivery_unknown", notice_spoken=False,
                            revision=job["revision"] + 1)
                 changed = True
-                notices.append((job, "native_unknown"))
+                notices.append((job, "alarm_unknown" if job["kind"] == "alarm" else "native_unknown"))
+                if job["kind"] == "alarm":
+                    from .alert_schedules import finish_occurrence
+                    finish_occurrence(self, job, now)
                 continue
             if job["kind"] == "scheduled_action":
                 if status == "claimed":
@@ -277,7 +328,7 @@ class JobsManager:
                     notices.append((job, "missed"))
                 elif status == "pending":
                     self._schedule_job(job)
-            elif status in {"pending", "due", "sounding"}:
+            elif job["kind"] == "timer" and status in {"pending", "due", "sounding"}:
                 if now - due > TIMER_GRACE:
                     if job.get("delivered_at"):
                         job.update(status="expired", outcome="auto_stopped", revision=job["revision"] + 1)
@@ -302,6 +353,23 @@ class JobsManager:
             self._emit_due(job)
 
     async def async_create(self, request_id: str, raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict) and raw.get("kind") in {"alarm", "reminder"}:
+            from .alert_schedules import create
+            return await create(self, request_id, raw)
+        if isinstance(raw, dict) and raw.get("kind") == "timer" and "due_at" not in raw:
+            relative = raw.get("schedule")
+            if (not isinstance(relative, dict) or relative.get("kind") != "relative"
+                    or isinstance(relative.get("seconds"), bool)
+                    or not isinstance(relative.get("seconds"), int) or relative["seconds"] <= 0
+                    or set(relative) != {"kind", "seconds"}):
+                raise JobError("invalid_format", "timer requires due_at or a positive relative schedule")
+            payload = raw.get("payload", {})
+            if not isinstance(payload, dict) or payload.get("duration_seconds", relative["seconds"]) != relative["seconds"]:
+                raise JobError("invalid_format", "timer duration and relative schedule must agree")
+            raw = {**raw, "payload": {**payload, "duration_seconds": relative["seconds"]},
+                   "due_at": iso_utc(self.now().astimezone(timezone.utc) + timedelta(seconds=relative["seconds"]))}
+        elif isinstance(raw, dict) and raw.get("kind") == "timer" and "schedule" in raw:
+            raise JobError("invalid_format", "provide due_at or schedule, not both")
         # Availability checks may use HA's service connection. Never hold the
         # state lock across that network work or a receipt exchange can deadlock.
         delivery = None
@@ -310,7 +378,15 @@ class JobsManager:
                 replay = self._replay(request_id)
                 if replay is not None:
                     return replay["job"]
-            output = await self.timer_output(raw.get("source_satellite"))
+            source = raw.get("source_satellite")
+            if source is None:
+                source = raw.get("context_satellite")
+            if source is None:
+                source = self.default_alert_output or None
+            if self.alert_output:
+                resolved = await self.alert_output(source, "alarm")
+                source = resolved["output"]
+            output = await self.timer_output(source)
             delivery = {"owner": "ha", "output": output["output"], "token": str(uuid.uuid4()), "receipts": {}}
             if output.get("delivery_protocol") == NATIVE_PROTOCOL:
                 delivery.update(protocol=NATIVE_PROTOCOL, device_id=output["device_id"])
@@ -403,10 +479,20 @@ class JobsManager:
             replay = self._replay(request_id)
             if replay is not None: return replay["job"]
             job = self._job(job_id); self._revision(job, expected_revision)
-            if job["status"] not in {"pending", "due"}: raise JobError("invalid_state", "only pending or due jobs can be cancelled")
+            if job["status"] not in {"pending", "paused", "due"}: raise JobError("invalid_state", "only pending, paused or due jobs can be cancelled")
             job.update(status="cancelled", revision=job["revision"] + 1)
-            result = copy.deepcopy(job); self._remember(request_id, {"job": result})
+            if job["kind"] in {"alarm", "reminder"}:
+                from .alert_schedules import finish_occurrence
+                finish_occurrence(self, job, self.now().astimezone(timezone.utc))
+            result = copy.deepcopy(job)
+            if job["kind"] in {"timer", "alarm"}:
+                result["delivery_facts"] = self.delivery_facts(job)
+            self._remember(request_id, {"job": result})
             await self._save(); self._cancel_schedule(job_id)
+            schedule = self.schedules.get(job.get("schedule_id"))
+            if schedule and schedule.get("current_job_id"):
+                current = self.jobs.get(schedule["current_job_id"])
+                if current and current["status"] == "pending": self._schedule_job(current)
             return result
 
     async def async_list(self, *, statuses: list[str] | None = None, kinds: list[str] | None = None,
@@ -414,7 +500,7 @@ class JobsManager:
                          for_reconcile: bool = False) -> list[dict[str, Any]]:
         async with self._lock:
             now = self.now().astimezone(timezone.utc)
-            return [copy.deepcopy(job) for job in self.jobs.values()
+            result = [copy.deepcopy(job) for job in self.jobs.values()
                     if (statuses is None or job["status"] in statuses)
                     and (kinds is None or job["kind"] in kinds)
                     and (source_satellite is None or job["source_satellite"] == source_satellite)
@@ -425,13 +511,267 @@ class JobsManager:
                              and job.get("notice_spoken") is False)
                          or (job["kind"] == "timer" and job.get("finished_at")
                              and parse_utc(job["finished_at"]) >= now - RECONCILE_TERMINAL_GRACE))]
+            for job in result:
+                if job["kind"] == "timer":
+                    job["allowed_operations"] = self._allowed_timer_operations(job, now)
+                    job["delivery_guarantee"] = self.delivery_guarantee(job)
+                    job["delivery_facts"] = self.delivery_facts(job)
+                    if job["status"] == "pending":
+                        job["remaining_seconds"] = max(0, math.ceil((parse_utc(job["due_at"]) - now).total_seconds()))
+                    elif job["status"] == "paused":
+                        job["remaining_seconds"] = job.get("paused_remaining_seconds")
+                elif job["kind"] in {"alarm", "reminder"}:
+                    job["allowed_operations"] = (["snooze", "dismiss"] if job["kind"] == "alarm"
+                                                  and job["status"] in {"due", "sounding", "completed"}
+                                                  and now <= parse_utc(job["due_at"]) + timedelta(minutes=5)
+                                                  and (job["status"] != "completed" or job.get("outcome") == "handed_off") else [])
+                    job["delivery_guarantee"] = self.delivery_guarantee(job)
+                    job["delivery_facts"] = self.delivery_facts(job)
+                elif job["kind"] == "scheduled_action":
+                    job["allowed_operations"] = ["cancel"] if job["status"] in {"pending", "due"} else []
+            return result
+
+    @staticmethod
+    def delivery_facts(job):
+        from .job_controls import delivery_facts
+        return delivery_facts(job)
+
+    async def async_timer_cancel_preview(self, *, source_satellite=None, context_source=None):
+        from .job_controls import preview_timer_cancel
+        return await preview_timer_cancel(self, source_satellite=source_satellite,
+                                          context_source=context_source)
+
+    async def async_timer_cancel_batch(self, request_id, selection):
+        from .job_controls import cancel_timer_batch
+        return await cancel_timer_batch(self, request_id, selection)
+
+    @staticmethod
+    def delivery_guarantee(job):
+        if job["kind"] == "reminder":
+            return "announcement_result"
+        if job.get("delivery", {}).get("protocol") == NATIVE_PROTOCOL:
+            return "handoff_only"
+        return "acknowledged" if job.get("delivery", {}).get("owner") == "ha" else "legacy"
+
+    async def async_list_schedules(self, *, kinds=None, enabled=None):
+        from .alert_schedules import list_schedules
+        async with self._lock:
+            return list_schedules(self, kinds=kinds, enabled=enabled)
+
+    async def async_operate_alert(self, request_id: str, *, schedule_id=None, job_id=None,
+                                  expected_revision: int, operation: str, arguments=None):
+        from .alert_schedules import operate
+        return await operate(self, request_id, schedule_id=schedule_id, job_id=job_id,
+                             expected_revision=expected_revision, operation=operation, arguments=arguments)
+
+    async def async_operate(self, request_id, *, job_id=None, schedule_id=None,
+                            expected_revision, operation, arguments=None):
+        """Dispatch typed job controls to their owning state machine."""
+        if bool(job_id) == bool(schedule_id):
+            raise JobError("invalid_format", "provide exactly one of job_id or schedule_id")
+        if schedule_id:
+            return await self.async_operate_alert(request_id, schedule_id=schedule_id,
+                expected_revision=expected_revision, operation=operation, arguments=arguments)
+        async with self._lock:
+            kind = self._job(job_id)["kind"]
+        if kind in {"alarm", "reminder"}:
+            return await self.async_operate_alert(request_id, job_id=job_id,
+                expected_revision=expected_revision, operation=operation, arguments=arguments)
+        if operation in {"cancel", "dismiss"}:
+            if arguments:
+                raise JobError("invalid_format", f"{operation} does not accept arguments")
+            method = self.async_cancel if operation == "cancel" else self.async_dismiss_timer
+            return await method(request_id, job_id, expected_revision)
+        return await self.async_operate_timer(request_id, job_id, expected_revision, operation, arguments)
+
+    async def async_resolve(self, request):
+        from .alert_schedules import resolve
+        return await resolve(self, request)
+
+    async def async_alert_outputs(self):
+        from .alert_schedules import outputs
+        return await outputs(self)
+
+    async def async_reminder_reserve(self, job_id, expected_revision):
+        from .alert_schedules import reminder_reserve
+        return await reminder_reserve(self, job_id, expected_revision)
+
+    async def async_reminder_finish(self, job_id, expected_revision, error=None):
+        from .alert_schedules import reminder_finish
+        return await reminder_finish(self, job_id, expected_revision, error=error)
+
+    @staticmethod
+    def _allowed_timer_operations(job, now):
+        status = job["status"]
+        operations = []
+        editable = status == "paused" or (status == "pending" and parse_utc(job["due_at"]) > now)
+        if editable:
+            operations.extend(["pause"] if status == "pending" else ["resume"])
+            operations.extend(["adjust_remaining", "set_remaining", "rename"])
+        if status in {"pending", "paused", "due"}:
+            operations.append("cancel")
+        if status == "sounding":
+            operations.append("dismiss")
+        if status not in TERMINAL_STATES:
+            operations.append("restart")
+        elif job.get("finished_at") and parse_utc(job["finished_at"]) >= now - JOB_RETENTION:
+            operations.append("restart")
+        return operations
+
+    async def async_operate_timer(self, request_id: str, job_id: str, expected_revision: int,
+                                  operation: str, arguments: Any = None) -> dict[str, Any]:
+        """Apply a user timer control under the same revision and save boundary."""
+        args = {} if arguments is None else arguments
+        if not isinstance(args, dict):
+            raise JobError("invalid_format", "arguments must be an object")
+        replacement_delivery = None
+        if operation == "restart":
+            async with self._lock:
+                replay = self._replay(request_id)
+                if replay is not None:
+                    return replay["job"]
+                original = copy.deepcopy(self.jobs.get(job_id))
+            if original:
+                if not self.timer_output:
+                    raise JobError("unavailable", "HA cannot verify the timer's original output for restart")
+                replacement = await self.timer_output(original.get("source_satellite"))
+                old_delivery = original.get("delivery", {})
+                if replacement.get("output") != old_delivery.get("output", original.get("source_satellite")):
+                    raise JobError("invalid_output", "The timer's original output identity has changed")
+                if old_delivery.get("owner") == "ha":
+                    old_protocol = old_delivery.get("protocol")
+                    new_protocol = replacement.get("delivery_protocol")
+                    if ((old_protocol == NATIVE_PROTOCOL) != (new_protocol == NATIVE_PROTOCOL)):
+                        raise JobError("invalid_output", "The timer's original delivery protocol is unavailable")
+                    if old_delivery.get("device_id") and replacement.get("device_id") != old_delivery["device_id"]:
+                        raise JobError("invalid_output", "The timer's original HA device identity has changed")
+                    if old_delivery.get("mac_address") and replacement.get("mac_address", "").replace(":", "").replace("-", "").lower() != old_delivery["mac_address"]:
+                        raise JobError("invalid_output", "The timer's original controller identity has changed")
+                replacement_delivery = {"owner": "ha", "output": replacement["output"],
+                                        "token": str(uuid.uuid4()), "receipts": {}}
+                if replacement.get("delivery_protocol") == NATIVE_PROTOCOL:
+                    replacement_delivery.update(protocol=NATIVE_PROTOCOL, device_id=replacement["device_id"])
+                if replacement.get("mac_address"):
+                    replacement_delivery.update(mac_address=replacement["mac_address"].replace(":", "").replace("-", "").lower(),
+                                                controller_device_id=replacement.get("controller_device_id"))
+        async with self._lock:
+            replay = self._replay(request_id)
+            if replay is not None:
+                return replay["job"]
+            job = self._job(job_id)
+            self._revision(job, expected_revision)
+            if job["kind"] != "timer":
+                raise JobError("invalid_state", "only timers support timer operations")
+            now = self.now().astimezone(timezone.utc)
+            status = job["status"]
+            if operation == "restart":
+                if set(args):
+                    raise JobError("invalid_format", "restart does not accept arguments")
+                if status in TERMINAL_STATES and (not job.get("finished_at") or
+                        parse_utc(job["finished_at"]) < now - JOB_RETENTION):
+                    raise JobError("invalid_state", "timer history is outside the restart retention window")
+                # Preserve the original timer as history, and atomically supersede
+                # a live generation so restart cannot leave two alerts running.
+                old = copy.deepcopy(job)
+                if status not in TERMINAL_STATES:
+                    job.update(status="cancelled", outcome="restarted", finished_at=iso_utc(now),
+                               revision=job["revision"] + 1)
+                new_job = self._restart_job(old, now, replacement_delivery)
+                self.jobs[new_job["id"]] = new_job
+                result = copy.deepcopy(new_job)
+                self._remember(request_id, {"job": result})
+                await self._save()
+                self._cancel_schedule(job_id)
+                self._schedule_job(new_job)
+                return result
+
+            if operation not in {"pause", "resume", "adjust_remaining", "set_remaining", "rename"}:
+                raise JobError("invalid_format", "unsupported timer operation")
+            updated = copy.deepcopy(job)
+            if operation == "pause":
+                if args or status != "pending" or now >= parse_utc(job["due_at"]):
+                    raise JobError("invalid_state", "only a not-yet-due timer can be paused")
+                remaining = math.ceil((parse_utc(job["due_at"]) - now).total_seconds())
+                if remaining <= 0:
+                    raise JobError("invalid_state", "timer has no positive remaining time")
+                updated.update(status="paused", paused_remaining_seconds=remaining)
+            elif operation == "resume":
+                if args or status != "paused":
+                    raise JobError("invalid_state", "only a paused timer can be resumed")
+                remaining = updated.get("paused_remaining_seconds")
+                if not isinstance(remaining, int) or isinstance(remaining, bool) or remaining <= 0:
+                    raise JobError("invalid_state", "paused timer has no positive remaining time")
+                updated["due_at"] = iso_utc(now + timedelta(seconds=remaining))
+                updated["status"] = "pending"
+                updated.pop("paused_remaining_seconds", None)
+                self._rotate_delivery(updated)
+            elif operation in {"adjust_remaining", "set_remaining"}:
+                if status not in {"pending", "paused"} or (status == "pending" and now >= parse_utc(job["due_at"])):
+                    raise JobError("invalid_state", "timer timing cannot be edited once due")
+                key = "seconds" if operation == "set_remaining" else "delta_seconds"
+                if set(args) != {key}:
+                    raise JobError("invalid_format", f"{operation} requires {key}")
+                value = args[key]
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise JobError("invalid_format", f"{key} must be an integer")
+                current = (math.ceil((parse_utc(job["due_at"]) - now).total_seconds())
+                           if status == "pending" else job.get("paused_remaining_seconds"))
+                remaining = value if operation == "set_remaining" else current + value
+                if remaining <= 0:
+                    raise JobError("invalid_format", "remaining time must be positive")
+                if status == "pending":
+                    updated["due_at"] = iso_utc(now + timedelta(seconds=remaining))
+                updated["paused_remaining_seconds"] = remaining if status == "paused" else None
+                if status != "paused":
+                    updated.pop("paused_remaining_seconds", None)
+                self._rotate_delivery(updated)
+            else:
+                if status not in {"pending", "paused"} or (status == "pending" and now >= parse_utc(job["due_at"])):
+                    raise JobError("invalid_state", "timer name cannot be changed once due")
+                if set(args) != {"name"}:
+                    raise JobError("invalid_format", "rename requires name")
+                name = args["name"]
+                if name is not None and (not isinstance(name, str) or len(name) > 160):
+                    raise JobError("invalid_format", "name must be a string of at most 160 characters")
+                updated["name"] = name
+                self._rotate_delivery(updated)
+            updated["revision"] += 1
+            self.jobs[job_id] = updated
+            result = copy.deepcopy(updated)
+            self._remember(request_id, {"job": result})
+            await self._save()
+            self._schedule_job(updated)
+            return result
+
+    def _rotate_delivery(self, job):
+        delivery = job.get("delivery", {})
+        if delivery.get("owner") == "ha" and delivery.get("protocol") != NATIVE_PROTOCOL:
+            delivery["token"] = str(uuid.uuid4())
+            delivery["receipts"] = {}
+
+    def _restart_job(self, original, now, replacement_delivery=None):
+        payload = copy.deepcopy(original["payload"])
+        seconds = payload["duration_seconds"]
+        job = {"id": str(uuid.uuid4()), "kind": "timer",
+               "due_at": iso_utc(now + timedelta(seconds=seconds)), "payload": payload,
+               "source_satellite": original.get("source_satellite"), "name": original.get("name"),
+               "status": "pending", "revision": 1, "created_at": iso_utc(now),
+               "restarted_from": original["id"]}
+        delivery = copy.deepcopy(replacement_delivery or original.get("delivery", {"owner": "core_gateway"}))
+        if delivery.get("owner") == "ha":
+            delivery["token"] = str(uuid.uuid4())
+            delivery["receipts"] = {}
+            delivery.pop("finish_attempted_at", None)
+            delivery.pop("transport_sent_at", None)
+        job["delivery"] = delivery
+        return job
 
     async def async_validate_output_bindings(self, bindings) -> None:
         """Do not detach an active timer's configured output during UI edits."""
         old = getattr(self, "delivery_worker", None)
         if old is None:
             return
-        jobs = await self.async_list(kinds=["timer"], statuses=["pending", "due", "sounding"])
+        jobs = await self.async_list(kinds=["timer"], statuses=list(ACTIVE_TIMER_STATUSES))
         for job in jobs:
             delivery = job.get("delivery", {})
             output = delivery.get("output")
@@ -443,7 +783,7 @@ class JobsManager:
         """Save a one-shot native finish reservation before any output work."""
         async with self._lock:
             job = self._job(job_id)
-            if (job["revision"] != expected_revision or job["status"] != "due"
+            if (job["kind"] not in {"timer", "alarm"} or job["revision"] != expected_revision or job["status"] != "due"
                     or job.get("delivery", {}).get("protocol") != NATIVE_PROTOCOL
                     or job["delivery"].get("finish_attempted_at")
                     or not parse_utc(job["due_at"]) <= self.now() <= parse_utc(job["due_at"]) + TIMER_GRACE):
@@ -457,7 +797,7 @@ class JobsManager:
         """Send once under the state guard; transport submission is not playback."""
         async with self._lock:
             job = self._job(job_id)
-            if (job["revision"] != expected_revision or job["status"] != "due"
+            if (job["kind"] not in {"timer", "alarm"} or job["revision"] != expected_revision or job["status"] != "due"
                     or job.get("delivery", {}).get("protocol") != NATIVE_PROTOCOL
                     or not job["delivery"].get("finish_attempted_at")
                     or self.now() > parse_utc(job["due_at"]) + TIMER_GRACE):
@@ -477,8 +817,13 @@ class JobsManager:
                 reason = None
             job["delivery"]["name_status"] = name_status
             job["revision"] += 1
+            if job["kind"] == "alarm":
+                from .alert_schedules import finish_occurrence
+                finish_occurrence(self, job, self.now().astimezone(timezone.utc))
             await self._save()
             self._cancel_schedule(job_id)
+            if job["kind"] == "alarm":
+                self._schedule_following_alert(job)
             if reason:
                 self.notify(job, reason)
             return reason is None
@@ -564,7 +909,9 @@ class JobsManager:
             if job["kind"] != "timer" or job["status"] != "sounding":
                 raise JobError("invalid_state", "timer is not sounding")
             job.update(status="dismissed", outcome="dismissed", revision=job["revision"] + 1)
-            result = copy.deepcopy(job); self._remember(request_id, {"job": result})
+            result = copy.deepcopy(job)
+            result["delivery_facts"] = self.delivery_facts(job)
+            self._remember(request_id, {"job": result})
             await self._save(); self._cancel_schedule(job_id)
             return result
 
@@ -591,8 +938,8 @@ class JobsManager:
         if not isinstance(receipts, list) or len(receipts) > 256:
             raise JobError("invalid_format", "invalid delivery receipt batch")
         async with self._lock:
-            original = self.jobs
-            updated = copy.deepcopy(original)
+            original, original_schedules = self.jobs, self.schedules
+            updated, updated_schedules = copy.deepcopy(original), copy.deepcopy(self.schedules)
             acknowledged, cleared, changed = [], set(), False
             for receipt in receipts:
                 if not isinstance(receipt, dict):
@@ -611,7 +958,7 @@ class JobsManager:
                         continue
                     raise JobError("not_found", "receipt job does not exist")
                 delivery = job.get("delivery", {})
-                if (job["kind"] != "timer" or delivery.get("owner") != "ha"
+                if (job["kind"] not in {"timer", "alarm"} or delivery.get("owner") != "ha"
                         or delivery.get("protocol") == NATIVE_PROTOCOL
                         or delivery.get("output") != output or delivery.get("token") != token):
                     raise JobError("invalid_output", "receipt does not belong to this output/presentation")
@@ -654,13 +1001,23 @@ class JobsManager:
                 job["revision"] += 1
             if changed:
                 self.jobs = updated
+                self.schedules = updated_schedules
+                from .alert_schedules import finish_occurrence
+                for jid in cleared:
+                    job = self.jobs.get(jid)
+                    if job and job["kind"] == "alarm":
+                        finish_occurrence(self, job, self.now().astimezone(timezone.utc))
                 try:
                     await self._save()
                 except BaseException:
                     self.jobs = original
+                    self.schedules = original_schedules
                     raise
                 for jid in cleared:
                     self.clear_notice(self.jobs[jid])
+                    job = self.jobs.get(jid)
+                    if job and job["kind"] == "alarm":
+                        self._schedule_following_alert(job)
             return acknowledged
 
     async def _action_grace_expired(self, job_id: str) -> None:
@@ -709,20 +1066,45 @@ class JobsManager:
             job.update(status="due", revision=job["revision"] + 1)
             await self._save(); self._emit_due(job); self._schedule_job(job)
 
+    async def _alert_due(self, job_id: str) -> None:
+        from .alert_schedules import due
+        await due(self, job_id)
+        job = self.jobs.get(job_id)
+        if job and job["kind"] == "alarm" and job["status"] == "due":
+            self._schedule_job(job)
+
     async def _timer_expired(self, job_id: str) -> None:
         async with self._lock:
             job = self.jobs.get(job_id)
-            if not job or job["kind"] != "timer" or job["status"] not in {"due", "sounding"}: return
+            if not job or job["kind"] not in {"timer", "alarm"} or job["status"] not in {"due", "sounding"}: return
             if self.now().astimezone(timezone.utc) <= parse_utc(job["due_at"]) + TIMER_GRACE:
                 self._schedule_job(job); return
             if job.get("delivery", {}).get("protocol") == NATIVE_PROTOCOL and job["delivery"].get("finish_attempted_at"):
                 job.update(status="unknown", outcome="native_delivery_unknown", notice_spoken=False,
                            revision=job["revision"] + 1)
-                await self._save(); self.notify(job, "native_unknown")
+                if job["kind"] == "alarm":
+                    from .alert_schedules import finish_occurrence
+                    finish_occurrence(self, job, self.now().astimezone(timezone.utc))
+                await self._save()
+                if job["kind"] == "alarm":
+                    self._schedule_following_alert(job)
+                self.notify(job, "alarm_unknown" if job["kind"] == "alarm" else "native_unknown")
             elif job.get("delivered_at"):
                 job.update(status="expired", outcome="auto_stopped", revision=job["revision"] + 1)
+                if job["kind"] == "alarm":
+                    from .alert_schedules import finish_occurrence
+                    finish_occurrence(self, job, self.now().astimezone(timezone.utc))
                 await self._save()
+                if job["kind"] == "alarm":
+                    self._schedule_following_alert(job)
             else:
-                job.update(status="missed", outcome="undelivered", notice_spoken=False,
+                outcome = "alarm_missed" if job["kind"] == "alarm" else "undelivered"
+                job.update(status="missed", outcome=outcome, notice_spoken=False,
                            revision=job["revision"] + 1)
-                await self._save(); self.notify(job, "undelivered")
+                if job["kind"] == "alarm":
+                    from .alert_schedules import finish_occurrence
+                    finish_occurrence(self, job, self.now().astimezone(timezone.utc))
+                await self._save()
+                if job["kind"] == "alarm":
+                    self._schedule_following_alert(job)
+                self.notify(job, "alarm_missed" if job["kind"] == "alarm" else "undelivered")

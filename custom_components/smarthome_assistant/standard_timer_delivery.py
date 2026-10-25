@@ -51,13 +51,14 @@ class StandardTimerDelivery:
         return output, (device, id(getattr(handler, "__self__", handler)))
 
     async def sync(self):
-        jobs = [job for job in await self.manager.async_list(kinds=["timer"])
+        jobs = [job for job in await self.manager.async_list(kinds=["timer", "alarm"])
                 if job.get("delivery", {}).get("protocol") == NATIVE_PROTOCOL]
         now = self.manager.now()
         outstanding = False
         for job in jobs:
             cutoff = parse_utc(job["due_at"]) + TIMER_GRACE
-            stop = job["status"] in {"cancelled", "dismissed", "expired", "missed", "unknown"} or now >= cutoff
+            stop = (job["status"] in {"cancelled", "dismissed", "expired", "missed", "unknown"}
+                    or (job["status"] != "paused" and now >= cutoff))
             if not stop and job["status"] == "completed":
                 outstanding = True  # Wait for the absolute cutoff, not another FINISHED.
                 continue
@@ -75,6 +76,10 @@ class StandardTimerDelivery:
                         event = "updated" if key in self._sent else "started"
                         self.output.send(output, event, job)
                         self._sent[key] = job["revision"]
+                elif job["status"] == "paused":
+                    if self._sent.get(key) != job["revision"]:
+                        self.output.send(output, "updated", job)
+                        self._sent[key] = job["revision"]
                 elif job["status"] == "due":
                     reserved = await self.manager.async_native_begin(job["id"], job["revision"])
                     if reserved is None:
@@ -83,7 +88,10 @@ class StandardTimerDelivery:
                     if reserved.get("name"):
                         try:
                             async with asyncio.timeout(min(3, max(.001, (cutoff - self.manager.now()).total_seconds()))):
-                                await self.output.announce(output, reserved["name"])
+                                if reserved["kind"] == "alarm":
+                                    await self.output.announce_message(output, reserved.get("name") or "Alarm.")
+                                else:
+                                    await self.output.announce(output, reserved.get("name"))
                             name_status = "announced"
                         except Exception:
                             name_status = "unknown"

@@ -16,6 +16,25 @@ CONF_TIMER_OUTPUTS = "timer_outputs"
 CONF_SPEECH_ENABLED = "speech_enabled"
 CONF_SPEECH_URL = "speech_url"
 CONF_SHOW_IN_SIDEBAR = "show_in_sidebar"
+CONF_DEFAULT_ALERT_OUTPUT = "default_alert_output"
+CONF_SNOOZE_SECONDS = "snooze_seconds"
+DEFAULT_SNOOZE_SECONDS = 9 * 60
+
+
+def alert_options(options: dict) -> dict:
+    """Validate HA-owned alert preferences; existing jobs retain their bindings."""
+    output = options.get(CONF_DEFAULT_ALERT_OUTPUT, "")
+    seconds = options.get(CONF_SNOOZE_SECONDS, DEFAULT_SNOOZE_SECONDS)
+    if not isinstance(output, str):
+        raise ValueError("Default alert output must be an Assist satellite")
+    output = output.strip()
+    if output and (not output.startswith("assist_satellite.")
+                   or not output.partition(".")[2] or output.count(".") != 1
+                   or not all(char.isalnum() or char == "_" for char in output.partition(".")[2])):
+        raise ValueError("Default alert output must be an Assist satellite")
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 1 <= seconds <= 86400 or int(seconds) != seconds:
+        raise ValueError("Snooze must be whole seconds between 1 and 86400")
+    return {CONF_DEFAULT_ALERT_OUTPUT: output, CONF_SNOOZE_SECONDS: int(seconds)}
 
 DATA_SPEECH_CLIENT = "speech_client"
 

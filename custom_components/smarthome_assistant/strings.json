@@ -22,7 +22,9 @@
       "pairing": {
         "title": "Approve SmartHome Core pairing",
         "description": "Connect to {core_url}, Core identity {core_id}? {replacement} Approving saves a new credential automatically. The persona affects wording only. HTTP connections rely on your trusted home network; use HTTPS on untrusted networks.",
-        "data": {"profile_id": "Persona"}
+        "data": {
+          "profile_id": "Persona"
+        }
       },
       "reconfigure": {
         "title": "Reconfigure SmartHome Core",
@@ -68,7 +70,9 @@
           "timer_outputs": "Enhanced timer output mapping (optional)",
           "speech_enabled": "Set up SmartHome speech platforms",
           "speech_url": "Speech service URL (optional; defaults to Core host on port 8773)",
-          "show_in_sidebar": "Show in sidebar"
+          "show_in_sidebar": "Show in sidebar",
+          "default_alert_output": "Default alert satellite (optional)",
+          "snooze_seconds": "Default snooze duration (seconds)"
         }
       }
     },
@@ -76,7 +80,8 @@
       "invalid_persona": "Choose a persona offered by Core or keep the saved persona.",
       "invalid_speech_settings": "Speech service URL must be a valid HTTP(S) URL without credentials.",
       "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their timer output mapping.",
-      "invalid_sidebar_preference": "Choose whether the SmartHome panel should appear in the sidebar."
+      "invalid_sidebar_preference": "Choose whether the SmartHome panel should appear in the sidebar.",
+      "invalid_alert_settings": "Choose an Assist satellite entity and a whole snooze duration between 1 and 86400 seconds."
     }
   }
 }

@@ -25,18 +25,26 @@ ASSIST = "conversation"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
-    unique_id = f"{entry.entry_id}_{VOICE_TIMERS_KEY}"
-    first_creation = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, unique_id) is None
-    async_add_entities([VoiceTimersSensor(hass.data[JOBS_DOMAIN], unique_id, first_creation)])
+    registry = er.async_get(hass)
+    entities = []
+    for kind in (VOICE_TIMERS_KEY, "alarms", "reminders"):
+        unique_id = f"{entry.entry_id}_{kind}"
+        first_creation = registry.async_get_entity_id("sensor", DOMAIN, unique_id) is None
+        if kind == VOICE_TIMERS_KEY:
+            entities.append(VoiceTimersSensor(hass.data[JOBS_DOMAIN], unique_id, first_creation))
+        else:
+            entities.append(ScheduledAlertsSensor(hass.data[JOBS_DOMAIN], unique_id, first_creation, kind[:-1]))
+    async_add_entities(entities)
 
 
 class VoiceTimersSensor(SensorEntity):
-    """Number of active (pending, due or sounding) SmartHome voice timers."""
+    """Number of active (pending, paused, due or sounding) voice timers."""
 
     _attr_has_entity_name = True
     _attr_name = "Voice timers"
     _attr_icon = "mdi:timer-outline"
     _attr_should_poll = False
+    _aliases = VOICE_TIMERS_ALIASES
 
     def __init__(self, manager, unique_id: str, first_creation: bool) -> None:
         self._manager = manager
@@ -56,9 +64,26 @@ class VoiceTimersSensor(SensorEntity):
             registry = er.async_get(self.hass)
             entry = registry.async_get(self.entity_id)
             if entry is not None and not entry.aliases:
-                registry.async_update_entity(self.entity_id, aliases=list(VOICE_TIMERS_ALIASES))
+                registry.async_update_entity(self.entity_id, aliases=list(self._aliases))
             async_expose_entity(self.hass, ASSIST, self.entity_id, True)
 
     @callback
     def _changed(self) -> None:
         self.async_write_ha_state()
+
+
+class ScheduledAlertsSensor(VoiceTimersSensor):
+    """Discovery/count only: never publish saved reminder contents to history."""
+
+    def __init__(self, manager, unique_id, first_creation, kind):
+        super().__init__(manager, unique_id, first_creation)
+        self._kind = kind
+        self._attr_name = "Alarms" if kind == "alarm" else "Reminders"
+        self._attr_icon = "mdi:alarm" if kind == "alarm" else "mdi:reminder"
+        self._aliases = (["alarms", "wake up alarms", "wake me"] if kind == "alarm"
+                         else ["reminders", "remind me", "spoken reminders"])
+
+    @property
+    def native_value(self) -> int:
+        return sum(record.get("kind") == self._kind and record.get("enabled", False)
+                   for record in getattr(self._manager, "schedules", {}).values())

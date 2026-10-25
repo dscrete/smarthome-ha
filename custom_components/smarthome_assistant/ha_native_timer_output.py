@@ -21,6 +21,7 @@ from homeassistant.components.intent import (
     async_device_supports_timers,
 )
 from homeassistant.components.intent.const import TIMER_DATA
+from homeassistant.components.assist_satellite import AssistSatelliteEntityFeature
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -52,6 +53,117 @@ class HAStandardTimerOutput:
             "delivery_protocol": "assist_native",
             "device_id": device_id,
         }
+
+    def describe_outputs(self) -> list[dict[str, Any]]:
+        """Describe registered Assist satellites without requiring them online."""
+        registry = er.async_get(self.hass)
+        return [self.describe_output(entry.entity_id) for entry in registry.entities.values()
+                if entry.entity_id.startswith("assist_satellite.")]
+
+    def resolve_alert_output(self, source: str, kind: str, *, outputs=None) -> dict[str, Any]:
+        """Resolve only exact registered output, name/alias, or room identity."""
+        if not isinstance(source, str) or not source.strip():
+            raise JobError("unsupported_output", "No alert source or default Assist satellite is configured")
+        requested = source.strip().casefold()
+        outputs = self.describe_outputs() if outputs is None else outputs
+        capable = ([item for item in outputs if item["supports_timer"]] if kind == "alarm" else
+                   [item for item in outputs if item["supports_announce"]])
+        # The exact entity/device and exact name/alias selectors outrank rooms.
+        direct = [item for item in capable if item["entity_id"].casefold() == requested
+                  or (item.get("device_id") or "").casefold() == requested]
+        if not direct:
+            registry = er.async_get(self.hass)
+            for item in capable:
+                entry = registry.async_get(item["entity_id"])
+                aliases = getattr(entry, "aliases", ()) if entry else ()
+                names = {item["name"].casefold(), *(str(alias).casefold() for alias in aliases)}
+                if requested in names:
+                    direct.append(item)
+        candidates = direct
+        if not candidates:
+            candidates = [item for item in capable if requested in {
+                (item.get("area_id") or "").casefold(), (item.get("area_name") or "").casefold()}]
+        if not candidates:
+            raise JobError("unsupported_output", "No registered alert output exactly matches that output or room")
+        if len(candidates) != 1:
+            error = JobError("ambiguous_output", "More than one registered alert output matches that name or room")
+            error.choices = candidates
+            raise error
+        return candidates[0]
+
+    def describe_output(self, output: str) -> dict[str, Any]:
+        entry = self._entity_entry(output)
+        if entry is None or not output.startswith("assist_satellite."):
+            raise JobError("unsupported_output", "Output must be a registered Assist satellite")
+        device = dr.async_get(self.hass).async_get(entry.device_id) if entry.device_id else None
+        state = self.hass.states.get(output)
+        available = bool(state and state.state not in {"unknown", "unavailable"}
+                         and entry.disabled_by is None and device is not None
+                         and getattr(device, "disabled_by", None) is None)
+        supports_timer = False
+        if entry.device_id:
+            try:
+                manager = self.hass.data.get(TIMER_DATA)
+                handlers = getattr(manager, "handlers", None)
+                supports_timer = (async_device_supports_timers(self.hass, entry.device_id)
+                                  and type(handlers) is dict and callable(handlers.get(entry.device_id)))
+            except Exception:
+                supports_timer = False
+        supports_timer = supports_timer or self._declares_timer_support(entry)
+        area_id = getattr(entry, "area_id", None) or getattr(device, "area_id", None)
+        try:
+            from homeassistant.helpers import area_registry as ar
+            area = ar.async_get(self.hass).async_get_area(area_id) if area_id else None
+        except Exception:
+            area = None
+        name = (getattr(state, "attributes", {}).get("friendly_name") if state else None) or getattr(entry, "name", None) or output
+        features = getattr(state, "attributes", {}).get("supported_features", 0) if state else 0
+        features = features if isinstance(features, int) and not isinstance(features, bool) else 0
+        return {"entity_id": output, "name": name, "area_id": area_id,
+                "area_name": getattr(area, "name", None), "available": available,
+                "supports_timer": bool(supports_timer and entry.disabled_by is None and device is not None
+                    and getattr(device, "disabled_by", None) is None),
+                "supports_announce": bool(features & AssistSatelliteEntityFeature.ANNOUNCE
+                    and entry.disabled_by is None and device is not None
+                    and getattr(device, "disabled_by", None) is None),
+                "device_id": entry.device_id}
+
+    def _declares_timer_support(self, entry) -> bool:
+        """Use ESPHome's restored device metadata while its handler is offline.
+
+        HA 2026.10 restores device_info and api_version on the ESPHome config
+        entry. This is capability evidence only: snapshot() still requires a
+        live registered handler before any native event or new timer is sent.
+        """
+        if entry.platform != "esphome":
+            return False
+        config_entries = getattr(self.hass, "config_entries", None)
+        if config_entries is None:
+            return False
+        config_entry = config_entries.async_get_entry(getattr(entry, "config_entry_id", None))
+        runtime = getattr(config_entry, "runtime_data", None)
+        info = getattr(runtime, "device_info", None)
+        api_version = getattr(runtime, "api_version", None)
+        if info is None or api_version is None:
+            return False
+        try:
+            from aioesphomeapi.model import VoiceAssistantFeature
+            return bool(info.voice_assistant_feature_flags_compat(api_version) & VoiceAssistantFeature.TIMERS)
+        except (AttributeError, TypeError, ImportError, ValueError):
+            return False
+
+    def target_mac(self, output: str) -> str | None:
+        """Return the unique registered MAC identity, when HA knows one."""
+        entry = self._entity_entry(output)
+        device = dr.async_get(self.hass).async_get(entry.device_id) if entry and entry.device_id else None
+        if device is None:
+            return None
+        values = {str(value).replace(":", "").replace("-", "").lower()
+                  for kind, value in device.connections if kind == "mac"}
+        values.update(str(value).replace(":", "").replace("-", "").lower()
+                      for kind, value in device.identifiers if kind == "esphome")
+        values = {value for value in values if len(value) == 12 and all(c in "0123456789abcdef" for c in value)}
+        return next(iter(values)) if len(values) == 1 else None
 
     def snapshot(self, output: str) -> tuple[str, Any]:
         """Return the live device ID and current HA-registered timer callback."""
@@ -107,7 +219,12 @@ class HAStandardTimerOutput:
             if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
                 raise ValueError("duration_seconds must be a positive integer")
             due_at = _parse_due_at(job["due_at"])
-            remaining = max(1, math.ceil((due_at - datetime.now(timezone.utc)).total_seconds()))
+            if job.get("status") == "paused":
+                remaining = job.get("paused_remaining_seconds")
+                if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining <= 0:
+                    raise ValueError("paused timer requires positive frozen remaining seconds")
+            else:
+                remaining = max(1, math.ceil((due_at - datetime.now(timezone.utc)).total_seconds()))
             monotonic_now = time.monotonic_ns()
             timer = TimerInfo(
                 id=job["id"],
@@ -123,7 +240,7 @@ class HAStandardTimerOutput:
                 created_at=monotonic_now,
                 updated_at=monotonic_now,
                 language="en",
-                is_active=event not in {"cancelled", "finished"},
+                is_active=event not in {"cancelled", "finished"} and job.get("status") != "paused",
             )
             timer.seconds = remaining if event in {"started", "updated"} else 0
             timer.updated_at = monotonic_now
@@ -135,13 +252,22 @@ class HAStandardTimerOutput:
 
     async def announce(self, output: str, name: str | None) -> None:
         """Ask HA's standard Assist Satellite service to announce the timer."""
-        self.snapshot(output)
+        await self.announce_message(output, f"{name} timer finished." if name else "Timer finished.")
+
+    async def announce_message(self, output: str, message: str) -> None:
+        """Speak caller-provided reminder text through the registered satellite."""
+        self.describe_output(output)
+        state = self.hass.states.get(output)
+        if state is None or state.state in {"unknown", "unavailable"}:
+            raise JobError("unavailable", "Assist satellite is disconnected")
+        if not isinstance(message, str) or not message.strip():
+            raise JobError("invalid_format", "Announcement message must be non-empty")
         await self.hass.services.async_call(
             "assist_satellite",
             "announce",
             {
                 "entity_id": output,
-                "message": f"{name} timer finished.",
+                "message": message,
                 "preannounce": False,
             },
             blocking=True,
