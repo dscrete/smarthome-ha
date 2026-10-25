@@ -51,8 +51,12 @@ jobs in HA's separate persistent storage.
    conversation, speech-to-text and text-to-speech. Pick the saved TTS voice in
    HA. English is currently advertised for Pocket TTS; STT advertises its configured
    language. Other installed HA speech engines remain selectable: disable our
-   speech-platform setup if they are preferred. Disable **Prefer handling commands locally** so native intents
-   cannot bypass Core's backend and validation. Assign the intended satellite.
+   speech-platform setup if they are preferred.
+   **Required: turn Prefer handling commands locally off in this pipeline**, then
+   assign the intended satellite. Otherwise HA can create native timers that bypass
+   SmartHome's backend, validation and confirmation and do not appear in its jobs
+   panel. SmartHome's own deterministic fast paths still handle simple supported
+   commands without an LLM call. Existing native HA timers remain separate.
 4. For EchoMuse, choose its **Home Assistant** voice backend and keep its normal
    controller online. HA's standard ESPHome integration supplies the connection.
 5. Standard timer-capable ESPHome satellites, including unmodified EchoMuse, use
