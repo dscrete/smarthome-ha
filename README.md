@@ -1,7 +1,7 @@
 # SmartHome Assistant for Home Assistant
 
-One integration for the SmartHome HA Assist agent, local STT/TTS, durable jobs and HA-owned
-timer delivery to compatible ESPHome Assist satellites. HA runs the voice pipeline; SmartHome Core interprets
+One integration for the SmartHome HA Assist agent, local STT/TTS, durable jobs, HA-owned
+timer delivery to compatible ESPHome Assist satellites, and Music Assistant voice control. HA runs the voice pipeline; SmartHome Core interprets
 requests and validates home actions. Core is installed separately.
 
 ## Install and update
@@ -15,6 +15,9 @@ The administrator **SmartHome** sidebar panel for timers and scheduled actions
 is opt in. Enable **Show in sidebar** in the integration's **Configure** options.
 The **Voice timers** sensor introduced in 1.5.0 requires compatible
 SmartHome Core; update Core before or with an upgrade from an older version.
+Voice music, speaker grouping and volume control require **1.8.0 or newer**, a
+loaded Music Assistant integration and a SmartHome Core release with the music
+capability; with an older Core the new commands are simply unused.
 No beta selection is required in HACS. The software verification does not establish
 physical satellite performance; the delivery limits below still apply.
 
@@ -140,6 +143,34 @@ Alarm/reminder definitions and their individual occurrences appear separately,
 so dismissing an occurrence leaves its recurring definition intact. See
 [the job API](custom_components/smarthome_assistant/jobs.md).
 
+### Music and volume
+
+With [Music Assistant](https://www.home-assistant.io/integrations/music_assistant)
+set up, Core can ask HA to play a song or artist (followed by an endless mix of
+similar music), an album, a playlist or a radio station. It can also add, remove
+or move speakers, change volume per speaker or everywhere, and pause, resume, skip
+or stop. Nothing is mapped by hand:
+
+1. Expose the Music Assistant player entities to Assist and give each an HA area.
+   A satellite plays on its own speaker, or on the only Music Assistant player
+   in its area. If that is wrong, set **Configure → Speaker overrides**, for
+   example `{"assist_satellite.kitchen_dot": "media_player.kitchen_dot_2"}`.
+2. Expose your saved Music Assistant group player and give it aliases such as
+   `everywhere` or `whole house`. "Play X everywhere" and "turn everything up"
+   use it. "Play X" on a Dot that is already playing in a group plays on the
+   whole group; "just the kitchen" splits it again.
+3. Mixes use Music Assistant radio mode, which needs a provider with
+   similar-track support such as Spotify. If radio mode is refused, the item
+   still plays and Core says no mix was available.
+
+Volume without a named speaker changes only the speaker you are talking to.
+Any exposed media player with volume control can be named (for example a TV).
+**Configure → Maximum voice volume** caps voice-set levels. HA chooses search
+results deterministically, so the reply names what is playing; say "no, the one
+by ..." to correct it. The music contract gives a sounding timer or alarm priority over music for "stop".
+A count-only **Music** sensor routes music wording to this capability, like the
+timer sensors. It records no titles. See [the media API](custom_components/smarthome_assistant/media.md).
+
 ### Voice timers sensor
 
 The integration adds count-only **Voice timers**, **Alarms** and **Reminders**
@@ -204,8 +235,11 @@ actions or changes to another conversation engine.
 - Scheduled device actions still require Core at dispatch. Missed actions are
   skipped; uncertain actions are never automatically replayed.
 - Timer delivery is software-tested with synthetic Dots. Physical audio, acoustic
-  wake recognition and display remain unverified. Music expansion is outside
-  this release.
+  wake recognition and display remain unverified.
+- Music control requires a loaded Music Assistant integration and exposed Music
+  Assistant players. It is software-tested against HA's Music Assistant actions
+  with simulated players; physical Dot grouping and playback depend on your
+  Music Assistant providers.
 
 ### Standard timer recovery limits
 
@@ -263,3 +297,15 @@ rather than removing the store or changing active timers' owners.
 This repository is exported from the private development project without its Git
 history, credentials, household configuration or test data. See the included
 [job API](custom_components/smarthome_assistant/jobs.md) for protocol details.
+
+## Tests
+
+The music modules have unit tests and Home Assistant-level tests in `tests/`.
+Pure scoring and speaker-resolution tests need only `pytest`. The broker and
+setup tests also need `pytest-homeassistant-custom-component` with the matching
+Home Assistant version and the requirements of HA's voice components; without
+them those tests are skipped.
+
+```bash
+pytest tests
+```

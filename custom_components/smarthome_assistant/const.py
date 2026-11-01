@@ -19,6 +19,10 @@ CONF_SHOW_IN_SIDEBAR = "show_in_sidebar"
 CONF_DEFAULT_ALERT_OUTPUT = "default_alert_output"
 CONF_SNOOZE_SECONDS = "snooze_seconds"
 DEFAULT_SNOOZE_SECONDS = 9 * 60
+CONF_MEDIA_PLAYER_MAP = "media_player_map"
+CONF_MEDIA_MAX_VOLUME = "media_max_volume"
+DEFAULT_MEDIA_MAX_VOLUME = 100
+DATA_MEDIA = "smarthome_assistant_media"
 
 
 def alert_options(options: dict) -> dict:
@@ -35,6 +39,35 @@ def alert_options(options: dict) -> dict:
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 1 <= seconds <= 86400 or int(seconds) != seconds:
         raise ValueError("Snooze must be whole seconds between 1 and 86400")
     return {CONF_DEFAULT_ALERT_OUTPUT: output, CONF_SNOOZE_SECONDS: int(seconds)}
+
+def _entity_id(value: Any, domain: str) -> bool:
+    if not isinstance(value, str):
+        return False
+    prefix, _, name = value.strip().partition(".")
+    return (prefix == domain and bool(name) and "." not in name
+            and all(char.isalnum() or char == "_" for char in name))
+
+
+def media_options(options: dict) -> dict:
+    """Validate optional speaker overrides and the voice volume ceiling.
+
+    Speakers are discovered from Assist exposure, areas and aliases; the map
+    only overrides which speaker a satellite means when that discovery is wrong.
+    """
+    mapping = options.get(CONF_MEDIA_PLAYER_MAP)
+    mapping = {} if mapping is None else mapping
+    ceiling = options.get(CONF_MEDIA_MAX_VOLUME, DEFAULT_MEDIA_MAX_VOLUME)
+    if not isinstance(mapping, dict):
+        raise ValueError("Speaker overrides must be an object")
+    result = {}
+    for satellite, player in mapping.items():
+        if not _entity_id(satellite, "assist_satellite") or not _entity_id(player, "media_player"):
+            raise ValueError("Speaker overrides map assist_satellite entities to media_player entities")
+        result[satellite.strip()] = player.strip()
+    if (isinstance(ceiling, bool) or not isinstance(ceiling, (int, float))
+            or int(ceiling) != ceiling or not 1 <= ceiling <= 100):
+        raise ValueError("Maximum voice volume must be a whole percentage between 1 and 100")
+    return {CONF_MEDIA_PLAYER_MAP: result, CONF_MEDIA_MAX_VOLUME: int(ceiling)}
 
 DATA_SPEECH_CLIENT = "speech_client"
 

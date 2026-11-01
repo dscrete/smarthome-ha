@@ -63,8 +63,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "Persona, speech, timer outputs, and sidebar",
-        "description": "Choose whether SmartHome supplies STT and TTS engines, and whether its jobs panel appears in the sidebar. Enhanced timer mappings select compatible acknowledged EchoMuse exchange actions.",
+        "title": "Persona, speech, timer outputs, music, and sidebar",
+        "description": "Choose whether SmartHome supplies STT and TTS engines, and whether its jobs panel appears in the sidebar. Enhanced timer mappings select compatible acknowledged EchoMuse exchange actions. Music speakers are the Music Assistant players you expose to Assist; a satellite uses its own speaker or the only one in its area. Speaker overrides are only needed when that is wrong.",
         "data": {
           "profile_id": "Persona",
           "timer_outputs": "Enhanced timer output mapping (optional)",
@@ -72,7 +72,9 @@
           "speech_url": "Speech service URL (optional; defaults to Core host on port 8773)",
           "show_in_sidebar": "Show in sidebar",
           "default_alert_output": "Default alert satellite (optional)",
-          "snooze_seconds": "Default snooze duration (seconds)"
+          "snooze_seconds": "Default snooze duration (seconds)",
+          "media_player_map": "Speaker overrides (optional)",
+          "media_max_volume": "Maximum voice volume"
         }
       }
     },
@@ -81,7 +83,8 @@
       "invalid_speech_settings": "Speech service URL must be a valid HTTP(S) URL without credentials.",
       "invalid_timer_outputs": "Map assist_satellite entities to unique esphome actions ending in _smarthome_timer_exchange_v1. Finish or cancel active timers before changing their timer output mapping.",
       "invalid_sidebar_preference": "Choose whether the SmartHome panel should appear in the sidebar.",
-      "invalid_alert_settings": "Choose an Assist satellite entity and a whole snooze duration between 1 and 86400 seconds."
+      "invalid_alert_settings": "Choose an Assist satellite entity and a whole snooze duration between 1 and 86400 seconds.",
+      "invalid_media_settings": "Map assist_satellite entities to media_player entities, and choose a maximum voice volume between 1 and 100%."
     }
   }
 }

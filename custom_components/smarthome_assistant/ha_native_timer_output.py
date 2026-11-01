@@ -156,14 +156,7 @@ class HAStandardTimerOutput:
         """Return the unique registered MAC identity, when HA knows one."""
         entry = self._entity_entry(output)
         device = dr.async_get(self.hass).async_get(entry.device_id) if entry and entry.device_id else None
-        if device is None:
-            return None
-        values = {str(value).replace(":", "").replace("-", "").lower()
-                  for kind, value in device.connections if kind == "mac"}
-        values.update(str(value).replace(":", "").replace("-", "").lower()
-                      for kind, value in device.identifiers if kind == "esphome")
-        values = {value for value in values if len(value) == 12 and all(c in "0123456789abcdef" for c in value)}
-        return next(iter(values)) if len(values) == 1 else None
+        return device_mac(device)
 
     def snapshot(self, output: str) -> tuple[str, Any]:
         """Return the live device ID and current HA-registered timer callback."""
@@ -306,6 +299,18 @@ class HAStandardTimerOutput:
         state = self.hass.states.get(entry.entity_id)
         return (device is not None and getattr(device, "disabled_by", None) is None
                 and state is not None and state.state not in {"unknown", "unavailable"})
+
+
+def device_mac(device: Any) -> str | None:
+    """Return a device's unique registered MAC identity, when HA knows one."""
+    if device is None:
+        return None
+    values = {str(value).replace(":", "").replace("-", "").lower()
+              for kind, value in device.connections if kind == "mac"}
+    values.update(str(value).replace(":", "").replace("-", "").lower()
+                  for kind, value in device.identifiers if kind == "esphome")
+    values = {value for value in values if len(value) == 12 and all(c in "0123456789abcdef" for c in value)}
+    return next(iter(values)) if len(values) == 1 else None
 
 
 def _parse_due_at(value: Any) -> datetime:

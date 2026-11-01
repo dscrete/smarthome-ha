@@ -15,10 +15,12 @@
   "after_dependencies": [
     "assist_pipeline",
     "esphome",
-    "media_source"
+    "media_player",
+    "media_source",
+    "music_assistant"
   ],
   "documentation": "https://github.com/dscrete/smarthome-ha",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/dscrete/smarthome-ha/issues",
-  "version": "1.7.0"
+  "version": "1.8.0"
 }

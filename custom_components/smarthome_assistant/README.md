@@ -92,7 +92,11 @@ existing safety policy, even after confirmation. Existing jobs remain inspectabl
 and cancellable. Immediate sensitive actions and scripts retain exact confirmation.
 Routine low-risk actions do not gain a blanket confirmation requirement.
 
-Music expansion, complex event automations, general
+Version 1.8.0 adds Music Assistant playback (songs and artists followed by a mix,
+albums, playlists, radio stations), speaker grouping, per-speaker or whole-home
+volume and transport controls through administrator-only WebSocket commands for
+Core. Speakers are discovered from Assist exposure, areas and aliases; see
+[the media API](media.md). Complex event automations, general
 undo and long-term memory are deferred. Existing unrelated features are not
 removed. The HA agent uses native tools with 20b low; the strict-response experiment
 is discontinued.
