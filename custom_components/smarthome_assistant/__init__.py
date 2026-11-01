@@ -14,14 +14,17 @@ from .const import (
     CONF_TOKEN, CONF_TIMER_OUTPUTS, CONVERSATION_PLATFORM, DATA_SPEECH_CLIENT,
     DOMAIN, PLATFORMS, SENSOR_PLATFORM, SPEECH_PLATFORMS,
     CONF_DEFAULT_ALERT_OUTPUT, CONF_SNOOZE_SECONDS, alert_options,
+    CONF_MEDIA_PLAYER_MAP, media_options,
 )
 from .jobs_setup import async_setup_jobs, async_configure_outputs, async_configure_panel
+from .media_websocket import async_setup_media
 from .speech import SpeechClient, speech_base_url_for_entry
 
 
 async def async_setup(hass: HomeAssistant, config) -> bool:
     """Start durable home work independently of the remote conversation client."""
     await async_setup_jobs(hass)
+    async_setup_media(hass)
     return True
 
 
@@ -31,6 +34,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     manager = hass.data["smarthome_jobs"]
     manager.default_alert_output = alerts[CONF_DEFAULT_ALERT_OUTPUT]
     manager.snooze_seconds = alerts[CONF_SNOOZE_SECONDS]
+    media = media_options(entry.options)
+    async_setup_media(hass).configure(media[CONF_MEDIA_PLAYER_MAP])
     await async_configure_outputs(hass, entry.options.get(
         CONF_TIMER_OUTPUTS, entry.data.get(CONF_TIMER_OUTPUTS, {})))
     await async_configure_panel(hass, entry.options.get(CONF_SHOW_IN_SIDEBAR, False))

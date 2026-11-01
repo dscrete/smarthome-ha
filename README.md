@@ -1,7 +1,7 @@
 # SmartHome Assistant for Home Assistant
 
-One integration for the SmartHome HA Assist agent, local STT/TTS, durable jobs and HA-owned
-timer delivery to compatible ESPHome Assist satellites. HA runs the voice pipeline; SmartHome Core interprets
+One integration for the SmartHome HA Assist agent, local STT/TTS, durable jobs, HA-owned
+timer delivery to compatible ESPHome Assist satellites, and Music Assistant playback. HA runs the voice pipeline; SmartHome Core interprets
 requests and validates home actions. Core is installed separately.
 
 ## Install and update
@@ -15,6 +15,9 @@ The administrator **SmartHome** sidebar panel for timers and scheduled actions
 is opt in. Enable **Show in sidebar** in the integration's **Configure** options.
 The **Voice timers** sensor introduced in 1.5.0 requires compatible
 SmartHome Core; update Core before or with an upgrade from an older version.
+Music by voice and speaker grouping require **1.8.0 or newer**, a loaded Music
+Assistant integration and matching SmartHome Core; with an older Core the new
+commands are simply unused.
 No beta selection is required in HACS. The software verification does not establish
 physical satellite performance; the delivery limits below still apply.
 
@@ -140,6 +143,32 @@ Alarm/reminder definitions and their individual occurrences appear separately,
 so dismissing an occurrence leaves its recurring definition intact. See
 [the job API](custom_components/smarthome_assistant/jobs.md).
 
+### Music
+
+With [Music Assistant](https://www.home-assistant.io/integrations/music_assistant)
+set up, SmartHome can play a song or artist (followed by an endless mix of similar
+music), an album, a playlist or a radio station, and add, remove or move speakers.
+Nothing is mapped by hand:
+
+1. Expose the Music Assistant player entities to Assist and give each an HA area.
+   A satellite plays on its own speaker, or on the only Music Assistant player in
+   its area. If that is wrong, set **Configure → Speaker overrides**, for example
+   `{"assist_satellite.kitchen_dot": "media_player.kitchen_dot_2"}`.
+2. Expose your saved Music Assistant group player and give it aliases such as
+   `everywhere` or `whole house`. "Play X everywhere" uses it. "Play X" on a Dot
+   that is already playing in a group plays on the whole group; "just the kitchen"
+   splits it again.
+3. Mixes use Music Assistant radio mode, which needs a provider with similar-track
+   support such as Spotify. If radio mode is refused, the item still plays and
+   SmartHome says no mix was available.
+
+HA chooses search results deterministically, so the reply names what is playing;
+say "no, the one by ..." to correct it. Volume, pause, skip, stop and "what's
+playing" work on the same exposed players through SmartHome's normal media-player
+handling. A sounding timer or alarm keeps priority for "stop". A count-only
+**Music** sensor routes music wording to this capability, like the timer sensors;
+it records no titles. See [the media API](custom_components/smarthome_assistant/media.md).
+
 ### Voice timers sensor
 
 The integration adds count-only **Voice timers**, **Alarms** and **Reminders**
@@ -204,8 +233,11 @@ actions or changes to another conversation engine.
 - Scheduled device actions still require Core at dispatch. Missed actions are
   skipped; uncertain actions are never automatically replayed.
 - Timer delivery is software-tested with synthetic Dots. Physical audio, acoustic
-  wake recognition and display remain unverified. Music expansion is outside
-  this release.
+  wake recognition and display remain unverified.
+- Music requires a loaded Music Assistant integration and exposed Music Assistant
+  players. It is software-tested against HA's Music Assistant actions with
+  simulated players; physical Dot grouping and playback depend on your Music
+  Assistant providers and remain unverified.
 
 ### Standard timer recovery limits
 

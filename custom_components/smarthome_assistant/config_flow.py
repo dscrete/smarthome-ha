@@ -32,6 +32,8 @@ from .const import (
     DOMAIN,
     validate_timer_outputs,
     alert_options,
+    CONF_MEDIA_PLAYER_MAP,
+    media_options,
 )
 from .pairing import DATA_PAIRING, PairingError, pairing_requests
 from .speech import speech_base_url
@@ -483,10 +485,16 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 except ValueError:
                     return self.async_show_form(step_id="init", data_schema=self._options_schema(),
                                                 errors={"base": "invalid_alert_settings"})
+                try:
+                    media = media_options({**self.config_entry.options, **user_input})
+                except ValueError:
+                    return self.async_show_form(step_id="init", data_schema=self._options_schema(),
+                                                errors={"base": "invalid_media_settings"})
                 return self.async_create_entry(
                     title="",
                     data={CONF_PROFILE_ID: profile_id, CONF_TIMER_OUTPUTS: timer_outputs,
-                          CONF_SHOW_IN_SIDEBAR: show_in_sidebar, **speech_settings, **alerts},
+                          CONF_SHOW_IN_SIDEBAR: show_in_sidebar, **speech_settings, **alerts,
+                          **media},
                 )
 
         return self.async_show_form(step_id="init", data_schema=self._options_schema(), errors=errors)
@@ -527,4 +535,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             )): selector.NumberSelector(selector.NumberSelectorConfig(
                 min=1, max=86400, step=1, mode=selector.NumberSelectorMode.BOX,
             )),
+            probatio.Optional(CONF_MEDIA_PLAYER_MAP, default=self.config_entry.options.get(
+                CONF_MEDIA_PLAYER_MAP, {},
+            )): selector.ObjectSelector(),
         })
